@@ -20,40 +20,39 @@ namespace GameLauncher
 
     public partial class MainWindow : Window
     {
-        // ── Endpoints ────────────────────────────────────────────────
-        // The game's CI publishes per-environment floating releases on
-        // every successful build. The launcher consumes the dev channel
-        // (`client-latest-dev`) — switch to `client-latest` to follow
-        // the production channel instead.
-        //
-        // Each release contains four assets we care about:
-        //   WebMain.swf            — the standalone SWF (browser channel)
-        //   WebMain.swf.md5        — 32-char hex MD5 of WebMain.swf
-        //   YamanoRealms-AIR.zip   — Adobe AIR captive runtime bundle
-        //   client-metadata.json   — build metadata (unused here)
-        //
-        // The MD5 is the source of truth for "do we need to update?" The
-        // AIR zip is what we actually install when the answer is yes.
+        // ── Endpoints ─────────────────────────────────────────────────
+        // Game CI publishes a floating `client-latest-dev` GitHub release
+        // on every push to develop. We pull three files from there:
+        //   WebMain.swf          → the standalone SWF (held next to us)
+        //   WebMain.swf.md5      → 32-char hex MD5 of WebMain.swf
+        //   YamanoRealms-AIR.zip → the AIR captive runtime bundle to run
+        // The Arcana repo must be public for these to resolve; private
+        // repos 404 on anonymous downloads.
         private const string CLIENT_RELEASE_BASE =
             "https://github.com/jojobobby/Arcana/releases/download/client-latest-dev";
         private const string REMOTE_HASH_URL   = CLIENT_RELEASE_BASE + "/WebMain.swf.md5";
+        private const string REMOTE_SWF_URL    = CLIENT_RELEASE_BASE + "/WebMain.swf";
         private const string REMOTE_BUNDLE_URL = CLIENT_RELEASE_BASE + "/YamanoRealms-AIR.zip";
 
         private const string VERSION_PREFIX = "YamanoRealms-no-wipe-betatesting";
         private const int HASH_DISPLAY_CHARS = 6;
 
-        // ── Local layout ─────────────────────────────────────────────
-        // After install:
-        //   <rootPath>/Hash.txt                  — SWF MD5 of what's installed
-        //   <rootPath>/YamanoRealms/             — extracted AIR captive bundle
-        //   <rootPath>/YamanoRealms/YamanoRealms.exe — entry point
-        //   <rootPath>/YamanoRealms-AIR.zip      — staging file during install
-        private const string BUNDLE_DIR_NAME = "YamanoRealms";
-        private const string BUNDLE_EXE_NAME = "YamanoRealms.exe";
-        private const string BUNDLE_ZIP_NAME = "YamanoRealms-AIR.zip";
-        private const string HASH_FILE_NAME  = "Hash.txt";
+        // ── Local layout ──────────────────────────────────────────────
+        // Everything lives in the launcher's working directory:
+        //   <rootPath>/YamanoRealmsLauncher.exe
+        //   <rootPath>/WebMain.swf              — held alongside, hash source of truth
+        //   <rootPath>/Hash.txt                 — cached MD5 of WebMain.swf
+        //   <rootPath>/YamanoRealms/            — extracted AIR captive bundle
+        //   <rootPath>/YamanoRealms/YamanoRealms.exe — entry point we spawn
+        //   <rootPath>/YamanoRealms-AIR.zip     — staging file, deleted after extract
+        private const string SWF_FILE_NAME    = "WebMain.swf";
+        private const string HASH_FILE_NAME   = "Hash.txt";
+        private const string BUNDLE_DIR_NAME  = "YamanoRealms";
+        private const string BUNDLE_EXE_NAME  = "YamanoRealms.exe";
+        private const string BUNDLE_ZIP_NAME  = "YamanoRealms-AIR.zip";
 
         private readonly string rootPath;
+        private readonly string swfPath;
         private readonly string hashFile;
         private readonly string bundleDir;
         private readonly string bundleExe;
@@ -91,6 +90,7 @@ namespace GameLauncher
         {
             InitializeComponent();
             rootPath  = Directory.GetCurrentDirectory();
+            swfPath   = Path.Combine(rootPath, SWF_FILE_NAME);
             hashFile  = Path.Combine(rootPath, HASH_FILE_NAME);
             bundleDir = Path.Combine(rootPath, BUNDLE_DIR_NAME);
             bundleExe = Path.Combine(bundleDir, BUNDLE_EXE_NAME);
@@ -122,20 +122,15 @@ namespace GameLauncher
             }
         }
 
-        // Hash.txt is the cached "what's installed". If the bundle itself is
-        // gone (player deleted it), invalidate the cache so we reinstall on
-        // the next check.
+        // "What's installed?" = hash of the local WebMain.swf, but only if
+        // the AIR bundle the launcher actually runs is also present.
+        // Missing either → treat as nothing installed → reinstall.
         private string ReadLocalHash()
         {
-            if (!File.Exists(bundleExe))
+            if (!File.Exists(swfPath) || !File.Exists(bundleExe))
                 return "";
 
-            if (File.Exists(hashFile))
-            {
-                var stored = File.ReadAllText(hashFile).Trim().ToLowerInvariant();
-                if (!string.IsNullOrEmpty(stored)) return stored;
-            }
-            return "";
+            return ComputeFileMd5(swfPath);
         }
 
         // ── Update flow ──────────────────────────────────────────────
@@ -160,11 +155,11 @@ namespace GameLauncher
 
                 if (string.IsNullOrEmpty(localHash))
                 {
-                    InstallBundle(isUpdate: false, expectedSwfHash: onlineHash);
+                    InstallUpdate(isUpdate: false, expectedHash: onlineHash);
                 }
                 else if (!string.Equals(localHash, onlineHash, StringComparison.OrdinalIgnoreCase))
                 {
-                    InstallBundle(isUpdate: true, expectedSwfHash: onlineHash);
+                    InstallUpdate(isUpdate: true, expectedHash: onlineHash);
                 }
                 else
                 {
@@ -178,20 +173,27 @@ namespace GameLauncher
             }
         }
 
-        private void InstallBundle(bool isUpdate, string expectedSwfHash)
+        // Delete-and-redownload, per spec. We can't safely "patch in place"
+        // when the AIR captive runtime DLLs may have changed between builds,
+        // so tearing the old install down before extracting the new one
+        // avoids stale-DLL hybrids that would crash at runtime.
+        private void InstallUpdate(bool isUpdate, string expectedHash)
         {
             try
             {
                 Status = isUpdate ? LauncherState.downloadingUpdate : LauncherState.downloadingGame;
 
-                // Clean up any zip left over from a previous failed install
-                // so the new download doesn't append-or-confuse on disk.
-                if (File.Exists(bundleZip))
-                    File.Delete(bundleZip);
+                // Stage 1 — wipe whatever's there.
+                TryDelete(swfPath);
+                TryDelete(hashFile);
+                TryDelete(bundleZip);
+                TryDeleteDir(bundleDir);
 
+                // Stage 2 — pull the standalone SWF (cheap, gives us the
+                // verification target we'll check the AIR bundle against).
                 WebClient webClient = new WebClient();
-                webClient.DownloadFileCompleted += DownloadBundleCompleted;
-                webClient.DownloadFileAsync(new Uri(REMOTE_BUNDLE_URL), bundleZip, expectedSwfHash);
+                webClient.DownloadFileCompleted += DownloadSwfCompleted;
+                webClient.DownloadFileAsync(new Uri(REMOTE_SWF_URL), swfPath, expectedHash);
             }
             catch (Exception ex)
             {
@@ -200,6 +202,44 @@ namespace GameLauncher
             }
         }
 
+        // Step 2 done — verify the SWF, then chain into the bundle download.
+        private void DownloadSwfCompleted(object sender, AsyncCompletedEventArgs e)
+        {
+            try
+            {
+                if (e.Error != null)
+                {
+                    Status = LauncherState.failed;
+                    MessageBox.Show($"SWF download failed: {e.Error.Message}");
+                    return;
+                }
+
+                var expectedHash = ((string)e.UserState ?? "").ToLowerInvariant();
+                var actualHash = ComputeFileMd5(swfPath);
+
+                if (!string.Equals(actualHash, expectedHash, StringComparison.OrdinalIgnoreCase))
+                {
+                    TryDelete(swfPath);
+                    Status = LauncherState.failed;
+                    MessageBox.Show(
+                        $"SWF integrity check failed.\nExpected {expectedHash}, got {actualHash}.");
+                    return;
+                }
+
+                // Stage 3 — pull the AIR captive runtime bundle.
+                WebClient webClient = new WebClient();
+                webClient.DownloadFileCompleted += DownloadBundleCompleted;
+                webClient.DownloadFileAsync(new Uri(REMOTE_BUNDLE_URL), bundleZip, expectedHash);
+            }
+            catch (Exception ex)
+            {
+                Status = LauncherState.failed;
+                MessageBox.Show($"Error processing SWF download: {ex.Message}");
+            }
+        }
+
+        // Step 3 done — extract, sanity-check the bundled SWF against the
+        // standalone (both should match), commit Hash.txt, ready.
         private void DownloadBundleCompleted(object sender, AsyncCompletedEventArgs e)
         {
             try
@@ -207,28 +247,13 @@ namespace GameLauncher
                 if (e.Error != null)
                 {
                     Status = LauncherState.failed;
-                    MessageBox.Show($"Download error: {e.Error.Message}");
+                    MessageBox.Show($"AIR bundle download failed: {e.Error.Message}");
                     return;
                 }
 
                 Status = LauncherState.extractingGame;
 
-                var expectedSwfHash = ((string)e.UserState ?? "").ToLowerInvariant();
-
-                // Wipe the prior install directory before extracting the new
-                // bundle. Without this, stale runtime DLLs from a previous
-                // build could be loaded by the new AIR app and mismatch the
-                // packaged SWF.
-                if (Directory.Exists(bundleDir))
-                {
-                    try { Directory.Delete(bundleDir, recursive: true); }
-                    catch (Exception ex)
-                    {
-                        Status = LauncherState.failed;
-                        MessageBox.Show($"Could not remove old install: {ex.Message}");
-                        return;
-                    }
-                }
+                var expectedHash = ((string)e.UserState ?? "").ToLowerInvariant();
 
                 ZipFile.ExtractToDirectory(bundleZip, bundleDir);
 
@@ -236,64 +261,65 @@ namespace GameLauncher
                 {
                     Status = LauncherState.failed;
                     MessageBox.Show(
-                        $"Bundle extracted but {BUNDLE_EXE_NAME} was not found. " +
-                        $"The AIR package may have been built with a different output name.");
+                        $"AIR bundle extracted but {BUNDLE_EXE_NAME} was not found. " +
+                        "The bundle layout may have changed.");
                     return;
                 }
 
-                // Verify the SWF inside the bundle matches the hash the
-                // server advertised. AIR puts the SWF at one of two known
-                // paths depending on packaging mode; check both.
-                var swfCandidates = new[]
+                // Belt-and-suspenders: confirm the SWF inside the bundle
+                // matches what the server published. Either of two paths
+                // depending on AIR packaging mode.
+                var swfInBundleCandidates = new[]
                 {
                     Path.Combine(bundleDir, "WebMain.swf"),
                     Path.Combine(bundleDir, "META-INF", "AIR", "WebMain.swf"),
                 };
-                string actualSwfHash = "";
-                foreach (var candidate in swfCandidates)
+                string bundledSwfHash = "";
+                foreach (var candidate in swfInBundleCandidates)
                 {
                     if (File.Exists(candidate))
                     {
-                        actualSwfHash = ComputeFileMd5(candidate);
+                        bundledSwfHash = ComputeFileMd5(candidate);
                         break;
                     }
                 }
 
-                if (string.IsNullOrEmpty(actualSwfHash))
+                if (!string.IsNullOrEmpty(bundledSwfHash) &&
+                    !string.Equals(bundledSwfHash, expectedHash, StringComparison.OrdinalIgnoreCase))
                 {
-                    Status = LauncherState.failed;
-                    MessageBox.Show("Could not locate WebMain.swf inside the AIR bundle to verify integrity.");
-                    return;
-                }
-
-                if (!string.Equals(actualSwfHash, expectedSwfHash, StringComparison.OrdinalIgnoreCase))
-                {
-                    // Don't commit a bundle whose SWF doesn't match the
-                    // advertised hash — could be a partial download or an
-                    // upload race. Tear it down and require a retry.
-                    try { Directory.Delete(bundleDir, recursive: true); } catch { }
-                    try { File.Delete(hashFile); } catch { }
+                    // Standalone and bundled SWFs disagree — refuse to commit.
+                    TryDelete(swfPath);
+                    TryDeleteDir(bundleDir);
+                    TryDelete(bundleZip);
 
                     Status = LauncherState.failed;
                     MessageBox.Show(
-                        $"Hash mismatch after install. Expected {expectedSwfHash}, got {actualSwfHash}.");
+                        $"AIR bundle SWF doesn't match standalone SWF — refusing to install.\n" +
+                        $"Expected {expectedHash}, bundle had {bundledSwfHash}.");
                     return;
                 }
 
-                File.WriteAllText(hashFile, actualSwfHash);
-                VersionText.Text = FormatVersionLabel(actualSwfHash);
-
-                // Zip is only kept as staging; remove it now that the
-                // bundle is installed and verified.
-                try { File.Delete(bundleZip); } catch { }
+                File.WriteAllText(hashFile, expectedHash);
+                VersionText.Text = FormatVersionLabel(expectedHash);
+                TryDelete(bundleZip);
 
                 Status = LauncherState.ready;
             }
             catch (Exception ex)
             {
                 Status = LauncherState.failed;
-                MessageBox.Show($"Error finishing game install: {ex.Message}");
+                MessageBox.Show($"Error installing AIR bundle: {ex.Message}");
             }
+        }
+
+        // ── Cleanup helpers ──────────────────────────────────────────
+        private static void TryDelete(string path)
+        {
+            try { if (File.Exists(path)) File.Delete(path); } catch { }
+        }
+        private static void TryDeleteDir(string path)
+        {
+            try { if (Directory.Exists(path)) Directory.Delete(path, recursive: true); } catch { }
         }
 
         // ── UI hooks ─────────────────────────────────────────────────
@@ -315,10 +341,8 @@ namespace GameLauncher
 
             try
             {
-                // The AIR captive bundle is fully self-contained — its own
-                // exe holds the runtime + the SWF, no external Flash Player
-                // needed. WorkingDirectory must be the bundle root so the
-                // runtime finds its sibling DLLs.
+                // WorkingDirectory must be the bundle root so the AIR
+                // runtime finds its sibling DLLs and bundled assets.
                 var startInfo = new ProcessStartInfo(bundleExe)
                 {
                     WorkingDirectory = bundleDir,
