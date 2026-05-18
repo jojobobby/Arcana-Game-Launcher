@@ -141,11 +141,36 @@ namespace GameLauncher
         // MD5. Server returns the same client-metadata.json the CI wrote
         // into the Docker image. Minimal schema we care about:
         //   { "swf": { "md5": "..." } }
+        //
+        // Raises InvalidServerResponseException with a friendly message if
+        // the server returns HTML / XML / an error page instead of JSON
+        // (which happens during deployments, ingress 503s, or when the
+        // /client/download endpoint isn't live yet). Caller turns that
+        // into a user-readable dialog rather than the cryptic JSON parser
+        // exception ("'<' is an invalid start of a value").
         private static string FetchRemoteSwfHash()
         {
+            string json;
             using (var webClient = new WebClient())
             {
-                var json = webClient.DownloadString(REMOTE_METADATA_URL);
+                json = webClient.DownloadString(REMOTE_METADATA_URL);
+            }
+
+            // Cheap content-shape check before invoking the JSON parser,
+            // so we can surface a useful message when the server returned
+            // <Error>...</Error> or an HTML error page.
+            var trimmed = json?.TrimStart() ?? "";
+            if (!trimmed.StartsWith("{") && !trimmed.StartsWith("["))
+            {
+                var preview = trimmed.Length > 120 ? trimmed.Substring(0, 120) + "…" : trimmed;
+                throw new InvalidServerResponseException(
+                    "The game server didn't return version info — it sent back something else " +
+                    "instead. The server may be restarting or behind on its deploy.\n\n" +
+                    "Server said:\n" + preview);
+            }
+
+            try
+            {
                 using (var doc = JsonDocument.Parse(json))
                 {
                     if (doc.RootElement.TryGetProperty("swf", out var swf) &&
@@ -156,7 +181,22 @@ namespace GameLauncher
                     }
                 }
             }
+            catch (JsonException ex)
+            {
+                throw new InvalidServerResponseException(
+                    "Couldn't read the version info from the server (malformed JSON).\n\n" +
+                    "Server said:\n" + (json.Length > 200 ? json.Substring(0, 200) + "…" : json) +
+                    "\n\nParse error: " + ex.Message);
+            }
             return "";
+        }
+
+        // Thrown when the metadata endpoint replies with non-JSON or
+        // structurally-wrong JSON. Caught in CheckForUpdates and rendered
+        // as a friendly MessageBox so players don't see raw stack traces.
+        private sealed class InvalidServerResponseException : Exception
+        {
+            public InvalidServerResponseException(string message) : base(message) { }
         }
 
         // ── Update flow ──────────────────────────────────────────────
@@ -188,6 +228,34 @@ namespace GameLauncher
                 {
                     Status = LauncherState.ready;
                 }
+            }
+            catch (InvalidServerResponseException ex)
+            {
+                Status = LauncherState.failed;
+                MessageBox.Show(ex.Message,
+                    "Server unavailable",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+            }
+            catch (WebException ex)
+            {
+                Status = LauncherState.failed;
+                // Friendly message for the common failure modes (timeout,
+                // DNS, 5xx) instead of raw .NET exception text.
+                string detail = ex.Status switch
+                {
+                    WebExceptionStatus.NameResolutionFailure =>
+                        "DNS lookup for the game server failed. Are you online?",
+                    WebExceptionStatus.ConnectFailure =>
+                        "Couldn't connect to the game server.",
+                    WebExceptionStatus.Timeout =>
+                        "The game server took too long to respond.",
+                    _ => ex.Message,
+                };
+                MessageBox.Show("Couldn't reach the game server.\n\n" + detail,
+                    "Connection error",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
             }
             catch (Exception ex)
             {
