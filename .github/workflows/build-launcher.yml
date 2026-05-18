@@ -1,0 +1,341 @@
+name: build-launcher
+
+on:
+  workflow_dispatch:
+    inputs:
+      mark_latest:
+        description: 'Also update the floating "latest" release tag'
+        required: false
+        type: boolean
+        default: true
+  push:
+    branches:
+      - 'main'
+    paths:
+      - 'GameLauncher/**'
+      - 'GameLauncher.sln'
+      - '.github/workflows/build-launcher.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-launcher-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    outputs:
+      sha_short: ${{ steps.sha.outputs.short }}
+      version: ${{ steps.version.outputs.version }}
+      release_tag: ${{ steps.version.outputs.release_tag }}
+      signed: ${{ steps.sign.outputs.signed }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Get short SHA
+        id: sha
+        shell: bash
+        run: echo "short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
+      - name: Set version info
+        id: version
+        shell: bash
+        run: |
+          # AssemblyVersion / FileVersion need a numeric MAJOR.MINOR.BUILD.REV
+          # form. We bake the GH run_number into BUILD so each build is
+          # distinct; the player-visible "version" still comes from the SWF
+          # hash at runtime, not this string.
+          BUILD_NUMBER=${{ github.run_number }}
+          VERSION="1.0.${BUILD_NUMBER}.0"
+          RELEASE_TAG="launcher-${{ steps.sha.outputs.short }}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "release_tag=$RELEASE_TAG" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION"
+          echo "Release tag: $RELEASE_TAG"
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('GameLauncher/**/*.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: Restore
+        run: dotnet restore GameLauncher.sln
+
+      # Single-file self-contained binary — no .NET install needed on the
+      # player's machine. Native libs are baked in via
+      # IncludeNativeLibrariesForSelfExtract so the .exe is the only file
+      # the user has to keep.
+      - name: Publish
+        shell: pwsh
+        run: |
+          Write-Host "Publishing YamanoRealmsLauncher v${{ steps.version.outputs.version }}"
+          dotnet publish GameLauncher/GameLauncher.csproj `
+            -c Release `
+            -r win-x64 `
+            --self-contained true `
+            -p:PublishSingleFile=true `
+            -p:IncludeNativeLibrariesForSelfExtract=true `
+            -p:EnableCompressionInSingleFile=true `
+            -p:DebugType=none `
+            -p:DebugSymbols=false `
+            -p:Version=${{ steps.version.outputs.version }} `
+            -p:AssemblyVersion=${{ steps.version.outputs.version }} `
+            -p:FileVersion=${{ steps.version.outputs.version }} `
+            -o publish
+
+          if (-Not (Test-Path "publish\YamanoRealmsLauncher.exe")) {
+            Write-Error "Build output not found"
+            exit 1
+          }
+          $size = (Get-Item "publish\YamanoRealmsLauncher.exe").Length
+          Write-Host "Built ($([math]::Round($size/1MB, 2)) MB)"
+
+      # ── Code signing ──────────────────────────────────────────────────
+      #
+      # Skipped automatically when no cert secret is configured, so the
+      # workflow still produces a (warned-about) binary while you're
+      # waiting on a cert. To enable signing, add two repo secrets:
+      #
+      #   CODE_SIGN_CERT_BASE64   - your .pfx file, base64 encoded
+      #                             (powershell: [Convert]::ToBase64String([IO.File]::ReadAllBytes('cert.pfx')) )
+      #   CODE_SIGN_PASSWORD      - the .pfx password
+      #
+      # Cert options ranked by SmartScreen friction:
+      #   - EV cert (DigiCert/Sectigo, ~$300-500/yr, hardware token):
+      #       Immediate SmartScreen trust, no "unknown publisher" warnings.
+      #   - Azure Trusted Signing (~$10/mo, Microsoft-managed):
+      #       Builds reputation quickly. Use azure/trusted-signing-action
+      #       instead of signtool below.
+      #   - OV cert (~$70-200/yr): Builds reputation slowly over many
+      #       downloads. Players will see warnings until reputation accrues.
+      #   - Self-signed: Signs but doesn't pass SmartScreen. Useful for
+      #       testing only — players will still see warnings.
+      #
+      # Signed binaries are timestamped against DigiCert's free TSA so
+      # they remain valid after the cert expires.
+      - name: Sign launcher
+        id: sign
+        if: ${{ env.HAS_CERT == 'true' }}
+        env:
+          HAS_CERT: ${{ secrets.CODE_SIGN_CERT_BASE64 != '' }}
+          CODE_SIGN_CERT_BASE64: ${{ secrets.CODE_SIGN_CERT_BASE64 }}
+          CODE_SIGN_PASSWORD: ${{ secrets.CODE_SIGN_PASSWORD }}
+        shell: pwsh
+        run: |
+          $certPath = Join-Path $env:RUNNER_TEMP "codesign.pfx"
+          [IO.File]::WriteAllBytes($certPath, [Convert]::FromBase64String($env:CODE_SIGN_CERT_BASE64))
+
+          # signtool ships with the Windows SDK; windows-latest has it on PATH
+          # via the standard Visual Studio install. Probe in case it isn't.
+          $signtool = (Get-Command signtool.exe -ErrorAction SilentlyContinue)?.Source
+          if (-not $signtool) {
+            $signtool = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' -Recurse `
+              -Filter signtool.exe |
+              Where-Object { $_.FullName -match 'x64' } |
+              Sort-Object FullName -Descending |
+              Select-Object -First 1 -ExpandProperty FullName
+          }
+          if (-not $signtool) {
+            Write-Error "signtool.exe not found"
+            exit 1
+          }
+          Write-Host "Using signtool: $signtool"
+
+          & $signtool sign `
+            /f $certPath `
+            /p $env:CODE_SIGN_PASSWORD `
+            /fd sha256 `
+            /tr http://timestamp.digicert.com `
+            /td sha256 `
+            /d "Yamano Realms Launcher" `
+            publish\YamanoRealmsLauncher.exe
+
+          if ($LASTEXITCODE -ne 0) {
+            Remove-Item $certPath -Force
+            Write-Error "signtool sign failed"
+            exit 1
+          }
+
+          & $signtool verify /pa /v publish\YamanoRealmsLauncher.exe
+          if ($LASTEXITCODE -ne 0) {
+            Remove-Item $certPath -Force
+            Write-Error "Signature verification failed"
+            exit 1
+          }
+
+          Remove-Item $certPath -Force
+          "signed=true" >> $env:GITHUB_OUTPUT
+          Write-Host "Binary signed and verified."
+
+      - name: Note unsigned build
+        if: ${{ steps.sign.outputs.signed != 'true' }}
+        shell: pwsh
+        run: |
+          Write-Host "::warning::Launcher binary was NOT code-signed."
+          Write-Host "Add CODE_SIGN_CERT_BASE64 and CODE_SIGN_PASSWORD repo secrets to enable signing."
+          Write-Host "Players will see a SmartScreen warning until the binary is signed."
+          "signed=false" >> $env:GITHUB_OUTPUT
+
+      # Hash AFTER signing — players verify this hash, and signature changes
+      # the bytes of the exe, so the hash must reflect the final artifact.
+      - name: Build launcher metadata
+        shell: bash
+        run: |
+          cd publish
+          MD5=$(powershell -Command "(Get-FileHash YamanoRealmsLauncher.exe -Algorithm MD5).Hash" | tr -d '\r' | tr '[:upper:]' '[:lower:]')
+          SHA256=$(powershell -Command "(Get-FileHash YamanoRealmsLauncher.exe -Algorithm SHA256).Hash" | tr -d '\r' | tr '[:upper:]' '[:lower:]')
+          SIZE=$(powershell -Command "(Get-Item YamanoRealmsLauncher.exe).Length" | tr -d '\r')
+
+          cat > launcher-metadata.json <<EOF
+          {
+            "version": "${{ steps.version.outputs.version }}",
+            "commit": "${{ github.sha }}",
+            "build_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "file_name": "YamanoRealmsLauncher.exe",
+            "file_size": $SIZE,
+            "md5": "$MD5",
+            "sha256": "$SHA256",
+            "signed": ${{ steps.sign.outputs.signed == 'true' && 'true' || 'false' }}
+          }
+          EOF
+          cat launcher-metadata.json
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: YamanoRealmsLauncher-${{ steps.sha.outputs.short }}
+          path: |
+            publish/YamanoRealmsLauncher.exe
+            publish/launcher-metadata.json
+          retention-days: 30
+
+  release:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: YamanoRealmsLauncher-${{ needs.build.outputs.sha_short }}
+          path: release-assets
+
+      - name: Delete prior release for this SHA (if any)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete ${{ needs.build.outputs.release_tag }} --yes --cleanup-tag 2>/dev/null || true
+
+      - name: Compose release notes
+        id: notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          SIGNED="${{ needs.build.outputs.signed }}"
+
+          # First-run instructions for unsigned builds. SmartScreen pops on
+          # the launcher binary because it's downloaded with Mark-of-the-Web
+          # from a browser; the AIR captive runtime exe the launcher
+          # extracts later doesn't carry MOTW and won't trigger SmartScreen
+          # at all, so we only need to talk about the very first launch.
+          if [ "$SIGNED" = "true" ]; then
+            SIGNED_BADGE="✓ Code-signed — no SmartScreen warning expected"
+            FIRST_RUN_BLOCK=""
+          else
+            SIGNED_BADGE="⚠ Not yet code-signed"
+            FIRST_RUN_BLOCK=$(cat <<'BLOCK'
+
+          ### First-time setup (~10 seconds)
+
+          The launcher is brand-new and Windows hasn't built up reputation for it yet,
+          so on **first launch only** you'll see:
+
+          > **Windows protected your PC**
+          > Microsoft Defender SmartScreen prevented an unrecognized app from starting.
+
+          To run the launcher:
+
+          1. Click **More info** (small link, easy to miss)
+          2. Click **Run anyway**
+
+          You only have to do this once per launcher update. After enough players
+          download a given build, Windows starts trusting it automatically and the
+          warning stops appearing for new players.
+
+          The launcher itself is the only file that triggers this warning — the
+          actual game (Adobe AIR runtime + SWF) is installed *by* the launcher to a
+          local folder and launches without any SmartScreen prompt.
+
+          ### Verifying the download (optional, paranoid mode)
+
+          If you'd like to confirm the file you downloaded matches what CI built,
+          right-click `YamanoRealmsLauncher.exe` → Properties → check the size, or
+          run in PowerShell:
+
+          ```powershell
+          Get-FileHash YamanoRealmsLauncher.exe -Algorithm SHA256
+          ```
+
+          and compare against the `sha256` field in `launcher-metadata.json`.
+          BLOCK
+          )
+          fi
+
+          {
+            echo "## Yamano Realms Launcher ${{ needs.build.outputs.version }}"
+            echo ""
+            echo "**Commit:** \`${{ github.sha }}\`"
+            echo "**Built:** $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "**Signing:** $SIGNED_BADGE"
+            echo ""
+            echo "### Download"
+            echo ""
+            echo "Grab **\`YamanoRealmsLauncher.exe\`** from the Assets list below and run it."
+            echo "It's a single self-contained file — no installer, no extra dependencies."
+            echo "$FIRST_RUN_BLOCK"
+            echo ""
+            echo "### Assets"
+            echo "- \`YamanoRealmsLauncher.exe\` — single-file self-contained Windows launcher (no .NET install required)"
+            echo "- \`launcher-metadata.json\` — build metadata including MD5/SHA256 of the binary"
+          } > release-notes.md
+
+          cat release-notes.md
+
+      - name: Create SHA-tagged release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ needs.build.outputs.release_tag }}" \
+            --title "Launcher ${{ needs.build.outputs.version }}" \
+            --notes-file release-notes.md \
+            release-assets/*
+
+      - name: Update floating 'latest' tag
+        if: ${{ github.event_name == 'push' || inputs.mark_latest }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Replace the moving 'latest' release with the new build, so the
+          # launcher's hard-coded download URL keeps pointing at the freshest
+          # binary without a code change.
+          gh release delete latest --yes --cleanup-tag 2>/dev/null || true
+
+          # Reuse the same body as the per-SHA release — players who land on
+          # `releases/latest` get the same first-run guidance.
+          gh release create latest \
+            --title "Latest Yamano Realms Launcher" \
+            --notes-file release-notes.md \
+            release-assets/*

@@ -7,11 +7,11 @@
         mc:Ignorable="d"
         WindowStartupLocation="CenterScreen"
         ContentRendered="Window_ContentRendered"
-        Title="Game Launcher" Height="600" Width="1000">
+        Title="Yamano Realms Launcher" Height="600" Width="1000">
     <Grid>
         <Image Stretch="UniformToFill" Source="/Assets/02.png" HorizontalAlignment="Right"/>
         <TextBlock Name="GameName" Text="Yamano Realms Launcher" FontWeight="Bold" VerticalAlignment="Top" HorizontalAlignment="Center" FontSize="50" Foreground="Black" Margin="0, 25, 0, 0"/>
-        <TextBlock Name="VersionText" VerticalAlignment="Bottom" HorizontalAlignment="Right" FontSize="20" Foreground="White" Margin="0, 0, 5, 0"/>
+        <TextBlock Name="VersionText" VerticalAlignment="Bottom" HorizontalAlignment="Right" FontSize="14" FontFamily="Consolas" Foreground="White" Margin="0, 0, 8, 8"/>
         <Button Name="PlayButton" Content="Checking For Updates" Click="Play_Click" Height="60" FontSize="28" FontWeight="Bold" Margin="15,0,0,15" VerticalAlignment="Bottom" HorizontalAlignment="Center" MinWidth="350"/>
     </Grid>
 </Window>

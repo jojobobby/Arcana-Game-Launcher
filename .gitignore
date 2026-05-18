@@ -1,0 +1,18 @@
+# Build output
+**/bin/
+**/obj/
+**/publish/
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.userprefs
+
+# Signing material — never commit certs/keys
+*.pfx
+*.p12
+*.snk
+GameLauncher_TemporaryKey.pfx
