@@ -6,6 +6,7 @@ using System.Net;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Security.Cryptography;
+using System.Text.Json;
 
 namespace GameLauncher
 {
@@ -21,25 +22,27 @@ namespace GameLauncher
     public partial class MainWindow : Window
     {
         // ── Endpoints ─────────────────────────────────────────────────
-        // Game CI publishes a floating `client-latest-dev` release on every
-        // push to develop. Releases live on the public Arcana-Game-Launcher
-        // repo (not the private Arcana source repo) so anonymous downloads
-        // work without auth. The game CI cross-posts using a PAT secret.
-        // We pull three files from there:
-        //   WebMain.swf          → the standalone SWF (held next to us)
-        //   WebMain.swf.md5      → 32-char hex MD5 of WebMain.swf
-        //   YamanoRealms-AIR.zip → the AIR captive runtime bundle to run
-        private const string CLIENT_RELEASE_BASE =
-            "https://github.com/jojobobby/Arcana-Game-Launcher/releases/download/client-latest-dev";
-        private const string REMOTE_HASH_URL   = CLIENT_RELEASE_BASE + "/WebMain.swf.md5";
-        private const string REMOTE_SWF_URL    = CLIENT_RELEASE_BASE + "/WebMain.swf";
-        private const string REMOTE_BUNDLE_URL = CLIENT_RELEASE_BASE + "/YamanoRealms-AIR.zip";
+        // The game server itself is the download source — its Docker image
+        // bundles the latest WebMain.swf + YamanoRealms-AIR.zip and serves
+        // them via /client/download and /air/download. This matches
+        // Cosmic's pattern: source repo stays private, no PAT shenanigans,
+        // launcher hits the same server players already talk to. The host
+        // is the appserver's k8s ingress hostname.
+        //
+        //   GET <ServerUrl>/client/download                  → WebMain.swf
+        //   GET <ServerUrl>/client/download?metadata=true    → client-metadata.json (JSON)
+        //   GET <ServerUrl>/air/download                     → YamanoRealms-AIR.zip
+        //
+        // To target production swap this for the prod ingress host.
+        private const string SERVER_URL          = "http://app.tidansrealm.com";
+        private const string REMOTE_METADATA_URL = SERVER_URL + "/client/download?metadata=true";
+        private const string REMOTE_SWF_URL      = SERVER_URL + "/client/download";
+        private const string REMOTE_BUNDLE_URL   = SERVER_URL + "/air/download";
 
         private const string VERSION_PREFIX = "YamanoRealms-no-wipe-betatesting";
         private const int HASH_DISPLAY_CHARS = 6;
 
         // ── Local layout ──────────────────────────────────────────────
-        // Everything lives in the launcher's working directory:
         //   <rootPath>/YamanoRealmsLauncher.exe
         //   <rootPath>/WebMain.swf              — held alongside, hash source of truth
         //   <rootPath>/Hash.txt                 — cached MD5 of WebMain.swf
@@ -134,6 +137,28 @@ namespace GameLauncher
             return ComputeFileMd5(swfPath);
         }
 
+        // Pull the server-side metadata blob and return the advertised SWF
+        // MD5. Server returns the same client-metadata.json the CI wrote
+        // into the Docker image. Minimal schema we care about:
+        //   { "swf": { "md5": "..." } }
+        private static string FetchRemoteSwfHash()
+        {
+            using (var webClient = new WebClient())
+            {
+                var json = webClient.DownloadString(REMOTE_METADATA_URL);
+                using (var doc = JsonDocument.Parse(json))
+                {
+                    if (doc.RootElement.TryGetProperty("swf", out var swf) &&
+                        swf.TryGetProperty("md5", out var md5) &&
+                        md5.ValueKind == JsonValueKind.String)
+                    {
+                        return md5.GetString().Trim().ToLowerInvariant();
+                    }
+                }
+            }
+            return "";
+        }
+
         // ── Update flow ──────────────────────────────────────────────
         private void CheckForUpdates()
         {
@@ -142,15 +167,12 @@ namespace GameLauncher
 
             try
             {
-                WebClient webClient = new WebClient();
-                var onlineHash = webClient.DownloadString(REMOTE_HASH_URL)
-                    .Trim()
-                    .ToLowerInvariant();
+                var onlineHash = FetchRemoteSwfHash();
 
                 if (string.IsNullOrEmpty(onlineHash))
                 {
                     Status = LauncherState.failed;
-                    MessageBox.Show("Remote hash file was empty.");
+                    MessageBox.Show("Remote metadata had no SWF hash.");
                     return;
                 }
 
@@ -190,8 +212,7 @@ namespace GameLauncher
                 TryDelete(bundleZip);
                 TryDeleteDir(bundleDir);
 
-                // Stage 2 — pull the standalone SWF (cheap, gives us the
-                // verification target we'll check the AIR bundle against).
+                // Stage 2 — pull the standalone SWF.
                 WebClient webClient = new WebClient();
                 webClient.DownloadFileCompleted += DownloadSwfCompleted;
                 webClient.DownloadFileAsync(new Uri(REMOTE_SWF_URL), swfPath, expectedHash);
