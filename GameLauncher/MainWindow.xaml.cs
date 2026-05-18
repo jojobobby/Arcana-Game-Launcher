@@ -21,15 +21,16 @@ namespace GameLauncher
     public partial class MainWindow : Window
     {
         // ── Endpoints ─────────────────────────────────────────────────
-        // Game CI publishes a floating `client-latest-dev` GitHub release
-        // on every push to develop. We pull three files from there:
+        // Game CI publishes a floating `client-latest-dev` release on every
+        // push to develop. Releases live on the public Arcana-Game-Launcher
+        // repo (not the private Arcana source repo) so anonymous downloads
+        // work without auth. The game CI cross-posts using a PAT secret.
+        // We pull three files from there:
         //   WebMain.swf          → the standalone SWF (held next to us)
         //   WebMain.swf.md5      → 32-char hex MD5 of WebMain.swf
         //   YamanoRealms-AIR.zip → the AIR captive runtime bundle to run
-        // The Arcana repo must be public for these to resolve; private
-        // repos 404 on anonymous downloads.
         private const string CLIENT_RELEASE_BASE =
-            "https://github.com/jojobobby/Arcana/releases/download/client-latest-dev";
+            "https://github.com/jojobobby/Arcana-Game-Launcher/releases/download/client-latest-dev";
         private const string REMOTE_HASH_URL   = CLIENT_RELEASE_BASE + "/WebMain.swf.md5";
         private const string REMOTE_SWF_URL    = CLIENT_RELEASE_BASE + "/WebMain.swf";
         private const string REMOTE_BUNDLE_URL = CLIENT_RELEASE_BASE + "/YamanoRealms-AIR.zip";
