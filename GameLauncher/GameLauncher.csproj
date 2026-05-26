@@ -6,17 +6,17 @@
     <UseWPF>true</UseWPF>
     <RootNamespace>GameLauncher</RootNamespace>
     <AssemblyName>YamanoRealmsLauncher</AssemblyName>
-    <ApplicationIcon>00000-4150202487.ico</ApplicationIcon>
+    <ApplicationIcon>TidansIcon2.ico</ApplicationIcon>
     <ApplicationManifest>Properties\app.manifest</ApplicationManifest>
     <LangVersion>latest</LangVersion>
     <Nullable>disable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
     <!-- Version overridden by CI via -p:Version=... -->
     <Version>1.0.0</Version>
-    <Company>Yamano Realms</Company>
-    <Product>Yamano Realms Launcher</Product>
-    <AssemblyTitle>Yamano Realms Launcher</AssemblyTitle>
-    <Description>Auto-updating launcher for Yamano Realms.</Description>
+    <Company>Tidan's Realm</Company>
+    <Product>Tidan's Realm Game Launcher</Product>
+    <AssemblyTitle>Tidan's Realm Game Launcher</AssemblyTitle>
+    <Description>Auto-updating launcher for Tidan's Realm.</Description>
   </PropertyGroup>
 
   <ItemGroup>
@@ -25,6 +25,11 @@
          exclude that file from compilation. The SDK derives the same
          metadata from the PropertyGroup above. -->
     <Compile Remove="Properties\AssemblyInfo.cs" />
+    <Resource Include="Assets\Title_Screen_0.png" />
+    <Resource Include="Assets\Title_Screen_1.png" />
+    <Resource Include="Assets\Title_Screen_2.png" />
+    <Resource Include="Assets\Title_Screen_3.png" />
+    <Resource Include="Assets\Title.v1.0.0.png" />
   </ItemGroup>
 
 </Project>

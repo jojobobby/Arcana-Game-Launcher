@@ -7,7 +7,7 @@
         WindowStartupLocation="CenterScreen"
         ContentRendered="Window_ContentRendered"
         ResizeMode="CanMinimize"
-        Title="Yamano Realms Launcher"
+        Title="Tidan's Realm Game Launcher"
         SizeToContent="WidthAndHeight"
         Background="#071018">
         <Window.Resources>
@@ -17,9 +17,9 @@
             <Setter Property="Padding" Value="28,0"/>
             <Setter Property="FontSize" Value="19"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
-            <Setter Property="Foreground" Value="#fff8e8"/>
-            <Setter Property="Background" Value="#c65f35"/>
-            <Setter Property="BorderBrush" Value="#ffd188"/>
+            <Setter Property="Foreground" Value="#f4fff3"/>
+            <Setter Property="Background" Value="#2f8f52"/>
+            <Setter Property="BorderBrush" Value="#9be68f"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Template">
@@ -38,10 +38,45 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Root" Property="Background" Value="#de7444"/>
+                                <Setter TargetName="Root" Property="Background" Value="#3da964"/>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="Root" Property="Background" Value="#9f472b"/>
+                                <Setter TargetName="Root" Property="Background" Value="#236d3e"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="Root" Property="Opacity" Value="0.65"/>
+                                <Setter Property="Cursor" Value="Arrow"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="UpdateButton" TargetType="Button" BasedOn="{StaticResource PrimaryButton}">
+            <Setter Property="Foreground" Value="#eef8ff"/>
+            <Setter Property="Background" Value="#2f68b7"/>
+            <Setter Property="BorderBrush" Value="#9fd1ff"/>
+            <Setter Property="Height" Value="34"/>
+            <Setter Property="MinWidth" Value="116"/>
+            <Setter Property="Padding" Value="16,0"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Root"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="5">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Root" Property="Background" Value="#3b7fd5"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Root" Property="Background" Value="#244f8e"/>
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter TargetName="Root" Property="Opacity" Value="0.65"/>
@@ -90,13 +125,114 @@
                 </Setter.Value>
             </Setter>
         </Style>
+        <Style x:Key="DangerButton" TargetType="Button" BasedOn="{StaticResource SecondaryButton}">
+            <Setter Property="Foreground" Value="#fff4f4"/>
+            <Setter Property="Background" Value="#8e2f35"/>
+            <Setter Property="BorderBrush" Value="#e88989"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Root"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="5">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Root" Property="Background" Value="#af3d43"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Root" Property="Background" Value="#692129"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="Root" Property="Opacity" Value="0.55"/>
+                                <Setter Property="Cursor" Value="Arrow"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="DownloadButton" TargetType="Button" BasedOn="{StaticResource SecondaryButton}">
+            <Setter Property="Foreground" Value="#eef8ff"/>
+            <Setter Property="Background" Value="#2f68b7"/>
+            <Setter Property="BorderBrush" Value="#9fd1ff"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Root"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="5">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Root" Property="Background" Value="#3b7fd5"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Root" Property="Background" Value="#244f8e"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="Root" Property="Opacity" Value="0.55"/>
+                                <Setter Property="Cursor" Value="Arrow"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="SmallPlayButton" TargetType="Button" BasedOn="{StaticResource SecondaryButton}">
+            <Setter Property="Foreground" Value="#f4fff3"/>
+            <Setter Property="Background" Value="#2f8f52"/>
+            <Setter Property="BorderBrush" Value="#9be68f"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Root"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="5">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Root" Property="Background" Value="#3da964"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Root" Property="Background" Value="#236d3e"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="Root" Property="Opacity" Value="0.55"/>
+                                <Setter Property="Cursor" Value="Arrow"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </Window.Resources>
 
     <Grid Width="696" Height="448" UseLayoutRounding="True">
-        <Image Source="/Assets/background.png"
-               Stretch="None"
+        <Image Name="BackgroundImageA"
+               Source="/Assets/Title_Screen_0.png"
+               Stretch="UniformToFill"
                HorizontalAlignment="Center"
                VerticalAlignment="Center"
+               RenderOptions.BitmapScalingMode="NearestNeighbor"
+               RenderOptions.EdgeMode="Aliased"/>
+        <Image Name="BackgroundImageB"
+               Stretch="UniformToFill"
+               HorizontalAlignment="Center"
+               VerticalAlignment="Center"
+               Opacity="0"
                RenderOptions.BitmapScalingMode="NearestNeighbor"
                RenderOptions.EdgeMode="Aliased"/>
 
@@ -113,39 +249,29 @@
 
         <StackPanel VerticalAlignment="Top"
                     HorizontalAlignment="Center"
-                    Margin="0,22,0,0">
-            <TextBlock Text="Yamano Realms"
-                       FontWeight="Bold"
-                       FontSize="38"
-                       Foreground="#fff8e8"
-                       TextAlignment="Center">
-                <TextBlock.Effect>
-                    <DropShadowEffect Color="Black" BlurRadius="8" ShadowDepth="2" Opacity="0.9"/>
-                </TextBlock.Effect>
-            </TextBlock>
-            <TextBlock Text="Production Realm"
+                    Margin="0,14,0,0">
+            <Image Source="/Assets/Title.v1.0.0.png"
+                   Width="294"
+                   Height="131"
+                   Stretch="Uniform"
+                   RenderOptions.BitmapScalingMode="HighQuality"/>
+            <TextBlock Text="Production"
                        FontSize="13"
                        FontWeight="SemiBold"
                        Foreground="#d8f4ff"
                        TextAlignment="Center"
-                       Margin="0,2,0,0">
+                       Margin="0,4,0,0">
                 <TextBlock.Effect>
                     <DropShadowEffect Color="Black" BlurRadius="5" ShadowDepth="1" Opacity="0.9"/>
                 </TextBlock.Effect>
             </TextBlock>
         </StackPanel>
 
-        <Border HorizontalAlignment="Center"
-                VerticalAlignment="Bottom"
-                Width="548"
-                MinHeight="176"
-                Margin="0,0,0,24"
-                Padding="22,18"
-                Background="#d7111821"
-                BorderBrush="#4ffff0c2"
-                BorderThickness="1"
-                CornerRadius="8">
-            <Grid>
+        <Grid HorizontalAlignment="Center"
+              VerticalAlignment="Bottom"
+              Width="548"
+              MinHeight="176"
+              Margin="0,0,0,24">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
@@ -188,7 +314,7 @@
                              Maximum="100"
                              Value="0"
                              Background="#293744"
-                             Foreground="#ffd188"
+                             Foreground="#57d684"
                              BorderThickness="0"/>
 
                 <Grid Grid.Row="2" Grid.ColumnSpan="2">
@@ -223,22 +349,27 @@
                                 Content="Open Folder"
                                 Click="OpenFolder_Click"
                                 Margin="0,0,8,0"/>
-                        <Button Name="UninstallButton"
-                                Style="{StaticResource SecondaryButton}"
-                                Content="Uninstall"
-                                Click="Uninstall_Click"/>
+                        <Button Name="PlayButton"
+                                Style="{StaticResource DownloadButton}"
+                                Content="Download"
+                                Click="Play_Click"/>
                     </StackPanel>
                 </Grid>
+        </Grid>
 
-                <Button Name="PlayButton"
-                        Grid.Row="3"
-                        Grid.ColumnSpan="2"
-                        Style="{StaticResource PrimaryButton}"
-                        Content="Checking For Updates"
-                        Click="Play_Click"
-                        Margin="0,16,0,0"
-                        HorizontalAlignment="Center"/>
-            </Grid>
-        </Border>
+        <Button Name="UpdateButton"
+                Style="{StaticResource UpdateButton}"
+                Content="Update"
+                Click="Update_Click"
+                HorizontalAlignment="Left"
+                VerticalAlignment="Bottom"
+                Margin="18,0,0,18"/>
+        <Button Name="UninstallButton"
+                Style="{StaticResource DangerButton}"
+                Content="Uninstall"
+                Click="Uninstall_Click"
+                HorizontalAlignment="Right"
+                VerticalAlignment="Bottom"
+                Margin="0,0,18,18"/>
     </Grid>
 </Window>

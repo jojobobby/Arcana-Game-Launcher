@@ -8,7 +8,10 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 
 namespace GameLauncher
@@ -49,7 +52,20 @@ namespace GameLauncher
         private LauncherState _status;
         private bool _isBusy;
         private bool _isMeasuringLatency;
+        private string _remoteGameHash;
+        private bool _launcherUpdateAvailable;
+        private bool _gameUpdateAvailable;
+        private bool _isBackgroundAActive = true;
+        private int _backgroundIndex;
         private readonly DispatcherTimer latencyTimer;
+        private readonly DispatcherTimer backgroundTimer;
+        private readonly string[] backgroundSources =
+        {
+            "/Assets/Title_Screen_0.png",
+            "/Assets/Title_Screen_1.png",
+            "/Assets/Title_Screen_2.png",
+            "/Assets/Title_Screen_3.png"
+        };
         private static readonly HttpClient Http = new HttpClient
         {
             Timeout = TimeSpan.FromMinutes(2)
@@ -85,6 +101,12 @@ namespace GameLauncher
                 Interval = TimeSpan.FromSeconds(1)
             };
             latencyTimer.Tick += LatencyTimer_Tick;
+
+            backgroundTimer = new DispatcherTimer
+            {
+                Interval = TimeSpan.FromSeconds(15)
+            };
+            backgroundTimer.Tick += BackgroundTimer_Tick;
         }
 
         private void UpdateStatusUi()
@@ -92,36 +114,75 @@ namespace GameLauncher
             switch (_status)
             {
                 case LauncherState.checking:
-                    PlayButton.Content = "Checking For Updates";
+                    UpdateButton.Content = "Checking";
+                    StatusText.Foreground = new SolidColorBrush(Color.FromRgb(255, 248, 232));
                     StatusText.Text = "Checking for updates...";
                     break;
                 case LauncherState.updatingLauncher:
-                    PlayButton.Content = "Updating Launcher";
+                    UpdateButton.Content = "Updating";
+                    StatusText.Foreground = new SolidColorBrush(Color.FromRgb(255, 248, 232));
                     StatusText.Text = "Updating launcher...";
                     break;
                 case LauncherState.ready:
                     PlayButton.Content = "Play";
+                    StatusText.Foreground = new SolidColorBrush(Color.FromRgb(87, 214, 132));
                     StatusText.Text = "Ready to play";
                     break;
                 case LauncherState.failed:
-                    PlayButton.Content = "Update Failed - Retry";
+                    UpdateButton.Content = "Retry Update";
+                    StatusText.Foreground = new SolidColorBrush(Color.FromRgb(255, 248, 232));
                     StatusText.Text = "Update check failed";
                     break;
                 case LauncherState.downloadingGame:
-                    PlayButton.Content = "Downloading Game";
+                    UpdateButton.Content = "Downloading";
+                    StatusText.Foreground = new SolidColorBrush(Color.FromRgb(255, 248, 232));
                     StatusText.Text = "Downloading game files...";
                     break;
                 case LauncherState.downloadingUpdate:
-                    PlayButton.Content = "Updating Game";
+                    UpdateButton.Content = "Updating";
+                    StatusText.Foreground = new SolidColorBrush(Color.FromRgb(255, 248, 232));
                     StatusText.Text = "Updating game files...";
                     break;
                 case LauncherState.extractingGame:
-                    PlayButton.Content = "Installing Game";
+                    UpdateButton.Content = "Installing";
+                    StatusText.Foreground = new SolidColorBrush(Color.FromRgb(255, 248, 232));
                     StatusText.Text = "Installing game files...";
                     break;
             }
 
-            PlayButton.IsEnabled = !_isBusy || _status == LauncherState.failed || _status == LauncherState.ready;
+            PlayButton.Content = "Play";
+            var isGameInstalled = IsGameInstalled();
+            PlayButton.IsEnabled = !_isBusy;
+            PlayButton.Content = isGameInstalled ? "Play" : "Download";
+            PlayButton.Style = (Style)FindResource(isGameInstalled ? "SmallPlayButton" : "DownloadButton");
+            OpenFolderButton.IsEnabled = !_isBusy;
+            UninstallButton.IsEnabled = !_isBusy && isGameInstalled;
+            UninstallButton.Visibility = isGameInstalled ? Visibility.Visible : Visibility.Collapsed;
+
+            if (!_isBusy)
+                ApplyUpdateButtonAvailability();
+            else
+                UpdateButton.IsEnabled = false;
+        }
+
+        private void ApplyUpdateButtonAvailability()
+        {
+            if (_launcherUpdateAvailable)
+            {
+                UpdateButton.Content = "Update Available";
+                UpdateButton.IsEnabled = true;
+                return;
+            }
+
+            if (_gameUpdateAvailable)
+            {
+                UpdateButton.Content = "Update Available";
+                UpdateButton.IsEnabled = true;
+                return;
+            }
+
+            UpdateButton.Content = "Update";
+            UpdateButton.IsEnabled = false;
         }
 
         private static string FormatVersionLabel(string md5Hex)
@@ -154,6 +215,11 @@ namespace GameLauncher
                 return "";
 
             return ComputeFileMd5(swfPath);
+        }
+
+        private bool IsGameInstalled()
+        {
+            return File.Exists(bundleExe);
         }
 
         private sealed class RemoteMetadata
@@ -267,6 +333,37 @@ namespace GameLauncher
             }
         }
 
+        private async Task<bool> IsLauncherUpdateAvailableAsync()
+        {
+            var currentExe = Environment.ProcessPath;
+            if (string.IsNullOrEmpty(currentExe) || !File.Exists(currentExe))
+                return false;
+
+            var updateDir = Path.Combine(Path.GetTempPath(), "YamanoRealmsLauncherUpdate");
+            var updateExe = Path.Combine(updateDir, "YamanoRealmsLauncher.check.exe");
+
+            try
+            {
+                Directory.CreateDirectory(updateDir);
+                TryDelete(updateExe);
+
+                await DownloadFileSilentlyAsync(LauncherDownloadUrl, updateExe);
+
+                var currentHash = ComputeFileMd5(currentExe);
+                var updateHash = ComputeFileMd5(updateExe);
+                return !string.IsNullOrEmpty(updateHash) &&
+                       !string.Equals(currentHash, updateHash, StringComparison.OrdinalIgnoreCase);
+            }
+            catch
+            {
+                return false;
+            }
+            finally
+            {
+                TryDelete(updateExe);
+            }
+        }
+
         private static void WriteLauncherUpdateScript(string scriptPath, string currentExe, string updateExe)
         {
             var currentPid = Process.GetCurrentProcess().Id;
@@ -289,7 +386,7 @@ namespace GameLauncher
             File.WriteAllText(scriptPath, script);
         }
 
-        private async Task CheckForUpdatesAsync()
+        private async Task CheckForUpdatesAsync(bool includeLauncherUpdate)
         {
             if (_isBusy)
                 return;
@@ -304,6 +401,9 @@ namespace GameLauncher
 
             try
             {
+                if (includeLauncherUpdate && await CheckForLauncherUpdateAsync())
+                    return;
+
                 var remote = await FetchRemoteMetadataAsync();
                 await UpdateGameLatencyAsync();
                 var onlineHash = remote.SwfHash;
@@ -485,6 +585,7 @@ namespace GameLauncher
                 VersionText.Text = FormatVersionLabel(expectedHash);
                 TryDelete(bundleZip);
 
+                _gameUpdateAvailable = false;
                 UpdateProgress.Value = 100;
                 Status = LauncherState.ready;
             }
@@ -527,6 +628,19 @@ namespace GameLauncher
             }
         }
 
+        private static async Task DownloadFileSilentlyAsync(string url, string outputPath)
+        {
+            using (var response = await Http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead))
+            {
+                response.EnsureSuccessStatusCode();
+                using (var input = await response.Content.ReadAsStreamAsync())
+                using (var output = File.Create(outputPath))
+                {
+                    await input.CopyToAsync(output);
+                }
+            }
+        }
+
         private string FindBundledSwfHash()
         {
             var swfInBundleCandidates = new[]
@@ -555,10 +669,82 @@ namespace GameLauncher
         private async void Window_ContentRendered(object sender, EventArgs e)
         {
             latencyTimer.Start();
-            if (await CheckForLauncherUpdateAsync())
+            backgroundTimer.Start();
+
+            var localHash = ReadLocalHash();
+            VersionText.Text = FormatVersionLabel(localHash);
+            UpdateProgress.Value = string.IsNullOrEmpty(localHash) ? 0 : 100;
+            Status = IsGameInstalled() ? LauncherState.ready : LauncherState.failed;
+            if (!IsGameInstalled())
+                StatusText.Text = "Install required";
+            await RefreshUpdateAvailabilityAsync();
+        }
+
+        private async Task RefreshUpdateAvailabilityAsync()
+        {
+            if (_isBusy)
                 return;
 
-            await CheckForUpdatesAsync();
+            try
+            {
+                UpdateButton.Content = "Checking";
+                UpdateButton.IsEnabled = false;
+
+                var launcherCheck = IsLauncherUpdateAvailableAsync();
+                var remoteCheck = FetchRemoteMetadataAsync();
+
+                _launcherUpdateAvailable = await launcherCheck;
+                var remote = await remoteCheck;
+                _remoteGameHash = remote.SwfHash;
+
+                var localHash = ReadLocalHash();
+                _gameUpdateAvailable = !string.IsNullOrEmpty(_remoteGameHash) &&
+                                       (string.IsNullOrEmpty(localHash) ||
+                                        !string.Equals(localHash, _remoteGameHash, StringComparison.OrdinalIgnoreCase));
+
+                ApplyUpdateButtonAvailability();
+            }
+            catch
+            {
+                _launcherUpdateAvailable = false;
+                _gameUpdateAvailable = false;
+                ApplyUpdateButtonAvailability();
+            }
+        }
+
+        private void BackgroundTimer_Tick(object sender, EventArgs e)
+        {
+            FadeToNextBackground();
+        }
+
+        private void FadeToNextBackground()
+        {
+            _backgroundIndex = (_backgroundIndex + 1) % backgroundSources.Length;
+
+            var active = _isBackgroundAActive ? BackgroundImageA : BackgroundImageB;
+            var incoming = _isBackgroundAActive ? BackgroundImageB : BackgroundImageA;
+
+            incoming.Source = LoadImage(backgroundSources[_backgroundIndex]);
+            incoming.Opacity = 0;
+
+            var fadeDuration = TimeSpan.FromSeconds(2.5);
+            var fadeIn = new DoubleAnimation(0, 1, fadeDuration);
+            var fadeOut = new DoubleAnimation(1, 0, fadeDuration);
+
+            fadeIn.Completed += (_, _) =>
+            {
+                active.Opacity = 0;
+                incoming.Opacity = 1;
+                _isBackgroundAActive = !_isBackgroundAActive;
+            };
+
+            incoming.BeginAnimation(OpacityProperty, fadeIn);
+            active.BeginAnimation(OpacityProperty, fadeOut);
+        }
+
+        private static ImageSource LoadImage(string source)
+        {
+            return new BitmapImage(new Uri(source, UriKind.Relative));
         }
 
         private async void LatencyTimer_Tick(object sender, EventArgs e)
@@ -568,9 +754,9 @@ namespace GameLauncher
 
         private async void Play_Click(object sender, RoutedEventArgs e)
         {
-            if (Status == LauncherState.failed)
+            if (!IsGameInstalled())
             {
-                await CheckForUpdatesAsync();
+                await CheckForUpdatesAsync(includeLauncherUpdate: false);
                 return;
             }
 
@@ -593,6 +779,11 @@ namespace GameLauncher
             }
         }
 
+        private async void Update_Click(object sender, RoutedEventArgs e)
+        {
+            await CheckForUpdatesAsync(includeLauncherUpdate: true);
+        }
+
         private void OpenFolder_Click(object sender, RoutedEventArgs e)
         {
             try
@@ -610,14 +801,14 @@ namespace GameLauncher
             }
         }
 
-        private void Uninstall_Click(object sender, RoutedEventArgs e)
+        private async void Uninstall_Click(object sender, RoutedEventArgs e)
         {
             if (_isBusy)
                 return;
 
             var result = MessageBox.Show(
                 "Remove the installed game files from this launcher folder?",
-                "Uninstall Yamano Realms",
+                "Uninstall Tidan's Realm",
                 MessageBoxButton.YesNo,
                 MessageBoxImage.Question);
 
@@ -629,8 +820,10 @@ namespace GameLauncher
 
             VersionText.Text = FormatVersionLabel("");
             UpdateProgress.Value = 0;
+            _gameUpdateAvailable = true;
             Status = LauncherState.failed;
             StatusText.Text = "Game files removed";
+            ApplyUpdateButtonAvailability();
         }
     }
 }
