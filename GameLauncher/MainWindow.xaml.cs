@@ -16,6 +16,7 @@ namespace GameLauncher
     enum LauncherState
     {
         checking,
+        updatingLauncher,
         ready,
         failed,
         downloadingGame,
@@ -26,6 +27,7 @@ namespace GameLauncher
     public partial class MainWindow : Window
     {
         private const string ServerUrl = "https://app.tidansrealm.com";
+        private const string LauncherDownloadUrl = "https://github.com/jojobobby/Arcana-Game-Launcher/releases/download/latest/YamanoRealmsLauncher.exe";
         private const string GameServerHost = "app.tidansrealm.com";
         private const int GameServerPort = 8887;
         private const string VersionPrefix = "YamanoRealms-no-wipe-betatesting";
@@ -50,7 +52,7 @@ namespace GameLauncher
         private readonly DispatcherTimer latencyTimer;
         private static readonly HttpClient Http = new HttpClient
         {
-            Timeout = TimeSpan.FromSeconds(15)
+            Timeout = TimeSpan.FromMinutes(2)
         };
 
         private static string RemoteMetadataUrl => ServerUrl + "/client/download?metadata=true";
@@ -92,6 +94,10 @@ namespace GameLauncher
                 case LauncherState.checking:
                     PlayButton.Content = "Checking For Updates";
                     StatusText.Text = "Checking for updates...";
+                    break;
+                case LauncherState.updatingLauncher:
+                    PlayButton.Content = "Updating Launcher";
+                    StatusText.Text = "Updating launcher...";
                     break;
                 case LauncherState.ready:
                     PlayButton.Content = "Play";
@@ -206,6 +212,81 @@ namespace GameLauncher
         private sealed class InvalidServerResponseException : Exception
         {
             public InvalidServerResponseException(string message) : base(message) { }
+        }
+
+        private async Task<bool> CheckForLauncherUpdateAsync()
+        {
+            var currentExe = Environment.ProcessPath;
+            if (string.IsNullOrEmpty(currentExe) || !File.Exists(currentExe))
+                return false;
+
+            var updateDir = Path.Combine(Path.GetTempPath(), "YamanoRealmsLauncherUpdate");
+            var updateExe = Path.Combine(updateDir, "YamanoRealmsLauncher.exe");
+            var updateScript = Path.Combine(updateDir, "apply-launcher-update.cmd");
+
+            try
+            {
+                Directory.CreateDirectory(updateDir);
+                TryDelete(updateExe);
+                TryDelete(updateScript);
+
+                Status = LauncherState.updatingLauncher;
+                UpdateProgress.Value = 0;
+
+                await DownloadFileAsync(LauncherDownloadUrl, updateExe, 100);
+
+                var currentHash = ComputeFileMd5(currentExe);
+                var updateHash = ComputeFileMd5(updateExe);
+                if (string.IsNullOrEmpty(updateHash) ||
+                    string.Equals(currentHash, updateHash, StringComparison.OrdinalIgnoreCase))
+                {
+                    TryDelete(updateExe);
+                    UpdateProgress.Value = 0;
+                    return false;
+                }
+
+                WriteLauncherUpdateScript(updateScript, currentExe, updateExe);
+                Process.Start(new ProcessStartInfo(updateScript)
+                {
+                    UseShellExecute = true,
+                    WindowStyle = ProcessWindowStyle.Hidden
+                });
+                Close();
+                return true;
+            }
+            catch (Exception ex)
+            {
+                TryDelete(updateExe);
+                TryDelete(updateScript);
+                Status = LauncherState.failed;
+                MessageBox.Show($"Could not update the launcher: {ex.Message}",
+                    "Launcher update failed",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return false;
+            }
+        }
+
+        private static void WriteLauncherUpdateScript(string scriptPath, string currentExe, string updateExe)
+        {
+            var currentPid = Process.GetCurrentProcess().Id;
+            var script =
+                "@echo off\r\n" +
+                "setlocal\r\n" +
+                $"set \"TARGET={currentExe}\"\r\n" +
+                $"set \"UPDATE={updateExe}\"\r\n" +
+                $"set \"PID={currentPid}\"\r\n" +
+                ":wait\r\n" +
+                "tasklist /FI \"PID eq %PID%\" | find \"%PID%\" >nul\r\n" +
+                "if not errorlevel 1 (\r\n" +
+                "  timeout /t 1 /nobreak >nul\r\n" +
+                "  goto wait\r\n" +
+                ")\r\n" +
+                "copy /Y \"%UPDATE%\" \"%TARGET%\" >nul\r\n" +
+                "start \"\" \"%TARGET%\"\r\n" +
+                "del \"%UPDATE%\" >nul 2>nul\r\n" +
+                "del \"%~f0\" >nul 2>nul\r\n";
+            File.WriteAllText(scriptPath, script);
         }
 
         private async Task CheckForUpdatesAsync()
@@ -474,6 +555,9 @@ namespace GameLauncher
         private async void Window_ContentRendered(object sender, EventArgs e)
         {
             latencyTimer.Start();
+            if (await CheckForLauncherUpdateAsync())
+                return;
+
             await CheckForUpdatesAsync();
         }
 
