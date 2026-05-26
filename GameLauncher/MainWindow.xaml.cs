@@ -1,17 +1,21 @@
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
-using System.Windows;
-using System.Net;
-using System.ComponentModel;
-using System.Diagnostics;
+using System.Net.Sockets;
+using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Threading.Tasks;
+using System.Windows;
+using System.Windows.Media;
+using System.Windows.Threading;
 
 namespace GameLauncher
 {
     enum LauncherState
     {
+        checking,
         ready,
         failed,
         downloadingGame,
@@ -21,39 +25,17 @@ namespace GameLauncher
 
     public partial class MainWindow : Window
     {
-        // ── Endpoints ─────────────────────────────────────────────────
-        // The game server itself is the download source — its Docker image
-        // bundles the latest WebMain.swf + YamanoRealms-AIR.zip and serves
-        // them via /client/download and /air/download. This matches
-        // Cosmic's pattern: source repo stays private, no PAT shenanigans,
-        // launcher hits the same server players already talk to. The host
-        // is the appserver's k8s ingress hostname.
-        //
-        //   GET <ServerUrl>/client/download                  → WebMain.swf
-        //   GET <ServerUrl>/client/download?metadata=true    → client-metadata.json (JSON)
-        //   GET <ServerUrl>/air/download                     → YamanoRealms-AIR.zip
-        //
-        // To target production swap this for the prod ingress host.
-        private const string SERVER_URL          = "http://app.tidansrealm.com";
-        private const string REMOTE_METADATA_URL = SERVER_URL + "/client/download?metadata=true";
-        private const string REMOTE_SWF_URL      = SERVER_URL + "/client/download";
-        private const string REMOTE_BUNDLE_URL   = SERVER_URL + "/air/download";
+        private const string ServerUrl = "https://app.tidansrealm.com";
+        private const string GameServerHost = "app.tidansrealm.com";
+        private const int GameServerPort = 8887;
+        private const string VersionPrefix = "YamanoRealms-no-wipe-betatesting";
+        private const int HashDisplayChars = 6;
 
-        private const string VERSION_PREFIX = "YamanoRealms-no-wipe-betatesting";
-        private const int HASH_DISPLAY_CHARS = 6;
-
-        // ── Local layout ──────────────────────────────────────────────
-        //   <rootPath>/YamanoRealmsLauncher.exe
-        //   <rootPath>/WebMain.swf              — held alongside, hash source of truth
-        //   <rootPath>/Hash.txt                 — cached MD5 of WebMain.swf
-        //   <rootPath>/YamanoRealms/            — extracted AIR captive bundle
-        //   <rootPath>/YamanoRealms/YamanoRealms.exe — entry point we spawn
-        //   <rootPath>/YamanoRealms-AIR.zip     — staging file, deleted after extract
-        private const string SWF_FILE_NAME    = "WebMain.swf";
-        private const string HASH_FILE_NAME   = "Hash.txt";
-        private const string BUNDLE_DIR_NAME  = "YamanoRealms";
-        private const string BUNDLE_EXE_NAME  = "YamanoRealms.exe";
-        private const string BUNDLE_ZIP_NAME  = "YamanoRealms-AIR.zip";
+        private const string SwfFileName = "WebMain.swf";
+        private const string HashFileName = "Hash.txt";
+        private const string BundleDirName = "YamanoRealms";
+        private const string BundleExeName = "YamanoRealms.exe";
+        private const string BundleZipName = "YamanoRealms-AIR.zip";
 
         private readonly string rootPath;
         private readonly string swfPath;
@@ -63,60 +45,94 @@ namespace GameLauncher
         private readonly string bundleZip;
 
         private LauncherState _status;
+        private bool _isBusy;
+        private bool _isMeasuringLatency;
+        private readonly DispatcherTimer latencyTimer;
+        private static readonly HttpClient Http = new HttpClient
+        {
+            Timeout = TimeSpan.FromSeconds(15)
+        };
+
+        private static string RemoteMetadataUrl => ServerUrl + "/client/download?metadata=true";
+        private static string RemoteSwfUrl => ServerUrl + "/client/download";
+        private static string RemoteBundleUrl => ServerUrl + "/air/download";
+
         internal LauncherState Status
         {
             get => _status;
             set
             {
                 _status = value;
-                switch (_status)
-                {
-                    case LauncherState.ready:
-                        PlayButton.Content = "Play";
-                        break;
-                    case LauncherState.failed:
-                        PlayButton.Content = "Update Failed - Retry";
-                        break;
-                    case LauncherState.downloadingGame:
-                        PlayButton.Content = "Downloading Game";
-                        break;
-                    case LauncherState.downloadingUpdate:
-                        PlayButton.Content = "Updating Game";
-                        break;
-                    case LauncherState.extractingGame:
-                        PlayButton.Content = "Installing Game";
-                        break;
-                }
+                UpdateStatusUi();
             }
         }
 
         public MainWindow()
         {
             InitializeComponent();
-            rootPath  = Directory.GetCurrentDirectory();
-            swfPath   = Path.Combine(rootPath, SWF_FILE_NAME);
-            hashFile  = Path.Combine(rootPath, HASH_FILE_NAME);
-            bundleDir = Path.Combine(rootPath, BUNDLE_DIR_NAME);
-            bundleExe = Path.Combine(bundleDir, BUNDLE_EXE_NAME);
-            bundleZip = Path.Combine(rootPath, BUNDLE_ZIP_NAME);
+            rootPath = Directory.GetCurrentDirectory();
+            swfPath = Path.Combine(rootPath, SwfFileName);
+            hashFile = Path.Combine(rootPath, HashFileName);
+            bundleDir = Path.Combine(rootPath, BundleDirName);
+            bundleExe = Path.Combine(bundleDir, BundleExeName);
+            bundleZip = Path.Combine(rootPath, BundleZipName);
+            EndpointText.Text = new Uri(ServerUrl).Host;
+
+            latencyTimer = new DispatcherTimer
+            {
+                Interval = TimeSpan.FromSeconds(1)
+            };
+            latencyTimer.Tick += LatencyTimer_Tick;
         }
 
-        // ── Display formatting ───────────────────────────────────────
+        private void UpdateStatusUi()
+        {
+            switch (_status)
+            {
+                case LauncherState.checking:
+                    PlayButton.Content = "Checking For Updates";
+                    StatusText.Text = "Checking for updates...";
+                    break;
+                case LauncherState.ready:
+                    PlayButton.Content = "Play";
+                    StatusText.Text = "Ready to play";
+                    break;
+                case LauncherState.failed:
+                    PlayButton.Content = "Update Failed - Retry";
+                    StatusText.Text = "Update check failed";
+                    break;
+                case LauncherState.downloadingGame:
+                    PlayButton.Content = "Downloading Game";
+                    StatusText.Text = "Downloading game files...";
+                    break;
+                case LauncherState.downloadingUpdate:
+                    PlayButton.Content = "Updating Game";
+                    StatusText.Text = "Updating game files...";
+                    break;
+                case LauncherState.extractingGame:
+                    PlayButton.Content = "Installing Game";
+                    StatusText.Text = "Installing game files...";
+                    break;
+            }
+
+            PlayButton.IsEnabled = !_isBusy || _status == LauncherState.failed || _status == LauncherState.ready;
+        }
+
         private static string FormatVersionLabel(string md5Hex)
         {
             if (string.IsNullOrEmpty(md5Hex))
-                return $"{VERSION_PREFIX}-unknown";
+                return $"{VersionPrefix}-unknown";
 
-            var slice = md5Hex.Length >= HASH_DISPLAY_CHARS
-                ? md5Hex.Substring(0, HASH_DISPLAY_CHARS)
+            var slice = md5Hex.Length >= HashDisplayChars
+                ? md5Hex.Substring(0, HashDisplayChars)
                 : md5Hex;
-            return $"{VERSION_PREFIX}-{slice}";
+            return $"{VersionPrefix}-{slice}";
         }
 
-        // ── Hash helpers ─────────────────────────────────────────────
         private static string ComputeFileMd5(string path)
         {
-            if (!File.Exists(path)) return "";
+            if (!File.Exists(path))
+                return "";
 
             using (var stream = File.OpenRead(path))
             using (var md5 = MD5.Create())
@@ -126,9 +142,6 @@ namespace GameLauncher
             }
         }
 
-        // "What's installed?" = hash of the local WebMain.swf, but only if
-        // the AIR bundle the launcher actually runs is also present.
-        // Missing either → treat as nothing installed → reinstall.
         private string ReadLocalHash()
         {
             if (!File.Exists(swfPath) || !File.Exists(bundleExe))
@@ -137,35 +150,25 @@ namespace GameLauncher
             return ComputeFileMd5(swfPath);
         }
 
-        // Pull the server-side metadata blob and return the advertised SWF
-        // MD5. Server returns the same client-metadata.json the CI wrote
-        // into the Docker image. Minimal schema we care about:
-        //   { "swf": { "md5": "..." } }
-        //
-        // Raises InvalidServerResponseException with a friendly message if
-        // the server returns HTML / XML / an error page instead of JSON
-        // (which happens during deployments, ingress 503s, or when the
-        // /client/download endpoint isn't live yet). Caller turns that
-        // into a user-readable dialog rather than the cryptic JSON parser
-        // exception ("'<' is an invalid start of a value").
-        private static string FetchRemoteSwfHash()
+        private sealed class RemoteMetadata
+        {
+            public string SwfHash { get; set; }
+            public long LatencyMs { get; set; }
+        }
+
+        private static async Task<RemoteMetadata> FetchRemoteMetadataAsync()
         {
             string json;
-            using (var webClient = new WebClient())
-            {
-                json = webClient.DownloadString(REMOTE_METADATA_URL);
-            }
+            var timer = Stopwatch.StartNew();
+            json = await Http.GetStringAsync(RemoteMetadataUrl);
+            timer.Stop();
 
-            // Cheap content-shape check before invoking the JSON parser,
-            // so we can surface a useful message when the server returned
-            // <Error>...</Error> or an HTML error page.
             var trimmed = json?.TrimStart() ?? "";
             if (!trimmed.StartsWith("{") && !trimmed.StartsWith("["))
             {
-                var preview = trimmed.Length > 120 ? trimmed.Substring(0, 120) + "…" : trimmed;
+                var preview = trimmed.Length > 120 ? trimmed.Substring(0, 120) + "..." : trimmed;
                 throw new InvalidServerResponseException(
-                    "The game server didn't return version info — it sent back something else " +
-                    "instead. The server may be restarting or behind on its deploy.\n\n" +
+                    "The game server didn't return version info. It may be restarting or behind on its deploy.\n\n" +
                     "Server said:\n" + preview);
             }
 
@@ -177,37 +180,52 @@ namespace GameLauncher
                         swf.TryGetProperty("md5", out var md5) &&
                         md5.ValueKind == JsonValueKind.String)
                     {
-                        return md5.GetString().Trim().ToLowerInvariant();
+                        return new RemoteMetadata
+                        {
+                            SwfHash = md5.GetString().Trim().ToLowerInvariant(),
+                            LatencyMs = timer.ElapsedMilliseconds
+                        };
                     }
                 }
             }
             catch (JsonException ex)
             {
                 throw new InvalidServerResponseException(
-                    "Couldn't read the version info from the server (malformed JSON).\n\n" +
-                    "Server said:\n" + (json.Length > 200 ? json.Substring(0, 200) + "…" : json) +
+                    "Couldn't read the version info from the server.\n\n" +
+                    "Server said:\n" + (json.Length > 200 ? json.Substring(0, 200) + "..." : json) +
                     "\n\nParse error: " + ex.Message);
             }
-            return "";
+
+            return new RemoteMetadata
+            {
+                SwfHash = "",
+                LatencyMs = timer.ElapsedMilliseconds
+            };
         }
 
-        // Thrown when the metadata endpoint replies with non-JSON or
-        // structurally-wrong JSON. Caught in CheckForUpdates and rendered
-        // as a friendly MessageBox so players don't see raw stack traces.
         private sealed class InvalidServerResponseException : Exception
         {
             public InvalidServerResponseException(string message) : base(message) { }
         }
 
-        // ── Update flow ──────────────────────────────────────────────
-        private void CheckForUpdates()
+        private async Task CheckForUpdatesAsync()
         {
+            if (_isBusy)
+                return;
+
+            _isBusy = true;
+            UpdateProgress.Value = 0;
+            Status = LauncherState.checking;
+            SetServerStatus(isOnline: null, latencyMs: null);
+
             var localHash = ReadLocalHash();
             VersionText.Text = FormatVersionLabel(localHash);
 
             try
             {
-                var onlineHash = FetchRemoteSwfHash();
+                var remote = await FetchRemoteMetadataAsync();
+                await UpdateGameLatencyAsync();
+                var onlineHash = remote.SwfHash;
 
                 if (string.IsNullOrEmpty(onlineHash))
                 {
@@ -218,41 +236,38 @@ namespace GameLauncher
 
                 if (string.IsNullOrEmpty(localHash))
                 {
-                    InstallUpdate(isUpdate: false, expectedHash: onlineHash);
+                    await InstallUpdateAsync(isUpdate: false, expectedHash: onlineHash);
                 }
                 else if (!string.Equals(localHash, onlineHash, StringComparison.OrdinalIgnoreCase))
                 {
-                    InstallUpdate(isUpdate: true, expectedHash: onlineHash);
+                    await InstallUpdateAsync(isUpdate: true, expectedHash: onlineHash);
                 }
                 else
                 {
+                    UpdateProgress.Value = 100;
                     Status = LauncherState.ready;
                 }
             }
             catch (InvalidServerResponseException ex)
             {
                 Status = LauncherState.failed;
-                MessageBox.Show(ex.Message,
-                    "Server unavailable",
+                SetServerStatus(isOnline: false, latencyMs: null);
+                MessageBox.Show(ex.Message, "Server unavailable", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+            catch (HttpRequestException ex)
+            {
+                Status = LauncherState.failed;
+                SetServerStatus(isOnline: false, latencyMs: null);
+                MessageBox.Show("Couldn't reach the game server.\n\n" + ex.Message,
+                    "Connection error",
                     MessageBoxButton.OK,
                     MessageBoxImage.Warning);
             }
-            catch (WebException ex)
+            catch (TaskCanceledException)
             {
                 Status = LauncherState.failed;
-                // Friendly message for the common failure modes (timeout,
-                // DNS, 5xx) instead of raw .NET exception text.
-                string detail = ex.Status switch
-                {
-                    WebExceptionStatus.NameResolutionFailure =>
-                        "DNS lookup for the game server failed. Are you online?",
-                    WebExceptionStatus.ConnectFailure =>
-                        "Couldn't connect to the game server.",
-                    WebExceptionStatus.Timeout =>
-                        "The game server took too long to respond.",
-                    _ => ex.Message,
-                };
-                MessageBox.Show("Couldn't reach the game server.\n\n" + detail,
+                SetServerStatus(isOnline: false, latencyMs: null);
+                MessageBox.Show("Couldn't reach the game server.\n\nThe game server took too long to respond.",
                     "Connection error",
                     MessageBoxButton.OK,
                     MessageBoxImage.Warning);
@@ -260,131 +275,127 @@ namespace GameLauncher
             catch (Exception ex)
             {
                 Status = LauncherState.failed;
+                SetServerStatus(isOnline: false, latencyMs: null);
                 MessageBox.Show($"Error checking for game updates: {ex.Message}");
+            }
+            finally
+            {
+                _isBusy = false;
+                UpdateStatusUi();
             }
         }
 
-        // Delete-and-redownload, per spec. We can't safely "patch in place"
-        // when the AIR captive runtime DLLs may have changed between builds,
-        // so tearing the old install down before extracting the new one
-        // avoids stale-DLL hybrids that would crash at runtime.
-        private void InstallUpdate(bool isUpdate, string expectedHash)
+        private void SetServerStatus(bool? isOnline, long? latencyMs)
+        {
+            if (isOnline == true)
+            {
+                ServerStatusDot.Fill = new SolidColorBrush(Color.FromRgb(87, 214, 132));
+                ServerStatusText.Text = "Server: online";
+                LatencyText.Text = latencyMs.HasValue ? $"Game: {latencyMs.Value} ms" : "Game: -- ms";
+                return;
+            }
+
+            if (isOnline == false)
+            {
+                ServerStatusDot.Fill = new SolidColorBrush(Color.FromRgb(230, 84, 84));
+                ServerStatusText.Text = "Server: offline";
+                LatencyText.Text = "Game: -- ms";
+                return;
+            }
+
+            ServerStatusDot.Fill = new SolidColorBrush(Color.FromRgb(123, 135, 144));
+            ServerStatusText.Text = "Server: checking";
+            LatencyText.Text = "Game: -- ms";
+        }
+
+        private static async Task<long?> MeasureGameServerLatencyAsync()
+        {
+            var timer = Stopwatch.StartNew();
+            using (var client = new TcpClient())
+            {
+                var connectTask = client.ConnectAsync(GameServerHost, GameServerPort);
+                var timeoutTask = Task.Delay(TimeSpan.FromSeconds(5));
+                var completed = await Task.WhenAny(connectTask, timeoutTask);
+                if (completed != connectTask)
+                    return null;
+
+                await connectTask;
+            }
+
+            timer.Stop();
+            return timer.ElapsedMilliseconds;
+        }
+
+        private async Task UpdateGameLatencyAsync()
+        {
+            if (_isMeasuringLatency)
+                return;
+
+            _isMeasuringLatency = true;
+            try
+            {
+                var latency = await MeasureGameServerLatencyAsync();
+                SetServerStatus(isOnline: latency.HasValue, latencyMs: latency);
+            }
+            catch
+            {
+                SetServerStatus(isOnline: false, latencyMs: null);
+            }
+            finally
+            {
+                _isMeasuringLatency = false;
+            }
+        }
+
+        private async Task InstallUpdateAsync(bool isUpdate, string expectedHash)
         {
             try
             {
                 Status = isUpdate ? LauncherState.downloadingUpdate : LauncherState.downloadingGame;
 
-                // Stage 1 — wipe whatever's there.
                 TryDelete(swfPath);
                 TryDelete(hashFile);
                 TryDelete(bundleZip);
                 TryDeleteDir(bundleDir);
 
-                // Stage 2 — pull the standalone SWF.
-                WebClient webClient = new WebClient();
-                webClient.DownloadFileCompleted += DownloadSwfCompleted;
-                webClient.DownloadFileAsync(new Uri(REMOTE_SWF_URL), swfPath, expectedHash);
-            }
-            catch (Exception ex)
-            {
-                Status = LauncherState.failed;
-                MessageBox.Show($"Error starting download: {ex.Message}");
-            }
-        }
+                await DownloadFileAsync(RemoteSwfUrl, swfPath, 45);
 
-        // Step 2 done — verify the SWF, then chain into the bundle download.
-        private void DownloadSwfCompleted(object sender, AsyncCompletedEventArgs e)
-        {
-            try
-            {
-                if (e.Error != null)
-                {
-                    Status = LauncherState.failed;
-                    MessageBox.Show($"SWF download failed: {e.Error.Message}");
-                    return;
-                }
-
-                var expectedHash = ((string)e.UserState ?? "").ToLowerInvariant();
                 var actualHash = ComputeFileMd5(swfPath);
-
                 if (!string.Equals(actualHash, expectedHash, StringComparison.OrdinalIgnoreCase))
                 {
                     TryDelete(swfPath);
                     Status = LauncherState.failed;
-                    MessageBox.Show(
-                        $"SWF integrity check failed.\nExpected {expectedHash}, got {actualHash}.");
+                    MessageBox.Show($"SWF integrity check failed.\nExpected {expectedHash}, got {actualHash}.");
                     return;
                 }
 
-                // Stage 3 — pull the AIR captive runtime bundle.
-                WebClient webClient = new WebClient();
-                webClient.DownloadFileCompleted += DownloadBundleCompleted;
-                webClient.DownloadFileAsync(new Uri(REMOTE_BUNDLE_URL), bundleZip, expectedHash);
-            }
-            catch (Exception ex)
-            {
-                Status = LauncherState.failed;
-                MessageBox.Show($"Error processing SWF download: {ex.Message}");
-            }
-        }
-
-        // Step 3 done — extract, sanity-check the bundled SWF against the
-        // standalone (both should match), commit Hash.txt, ready.
-        private void DownloadBundleCompleted(object sender, AsyncCompletedEventArgs e)
-        {
-            try
-            {
-                if (e.Error != null)
-                {
-                    Status = LauncherState.failed;
-                    MessageBox.Show($"AIR bundle download failed: {e.Error.Message}");
-                    return;
-                }
+                await DownloadFileAsync(RemoteBundleUrl, bundleZip, 90);
 
                 Status = LauncherState.extractingGame;
+                UpdateProgress.Value = 94;
 
-                var expectedHash = ((string)e.UserState ?? "").ToLowerInvariant();
-
-                ZipFile.ExtractToDirectory(bundleZip, bundleDir);
+                await Task.Run(() => ZipFile.ExtractToDirectory(bundleZip, bundleDir));
 
                 if (!File.Exists(bundleExe))
                 {
                     Status = LauncherState.failed;
                     MessageBox.Show(
-                        $"AIR bundle extracted but {BUNDLE_EXE_NAME} was not found. " +
+                        $"AIR bundle extracted but {BundleExeName} was not found. " +
                         "The bundle layout may have changed.");
                     return;
                 }
 
-                // Belt-and-suspenders: confirm the SWF inside the bundle
-                // matches what the server published. Either of two paths
-                // depending on AIR packaging mode.
-                var swfInBundleCandidates = new[]
-                {
-                    Path.Combine(bundleDir, "WebMain.swf"),
-                    Path.Combine(bundleDir, "META-INF", "AIR", "WebMain.swf"),
-                };
-                string bundledSwfHash = "";
-                foreach (var candidate in swfInBundleCandidates)
-                {
-                    if (File.Exists(candidate))
-                    {
-                        bundledSwfHash = ComputeFileMd5(candidate);
-                        break;
-                    }
-                }
-
+                var bundledSwfHash = FindBundledSwfHash();
                 if (!string.IsNullOrEmpty(bundledSwfHash) &&
                     !string.Equals(bundledSwfHash, expectedHash, StringComparison.OrdinalIgnoreCase))
                 {
-                    // Standalone and bundled SWFs disagree — refuse to commit.
                     TryDelete(swfPath);
                     TryDeleteDir(bundleDir);
                     TryDelete(bundleZip);
 
                     Status = LauncherState.failed;
                     MessageBox.Show(
-                        $"AIR bundle SWF doesn't match standalone SWF — refusing to install.\n" +
+                        "AIR bundle SWF doesn't match standalone SWF. Refusing to install.\n" +
                         $"Expected {expectedHash}, bundle had {bundledSwfHash}.");
                     return;
                 }
@@ -393,36 +404,89 @@ namespace GameLauncher
                 VersionText.Text = FormatVersionLabel(expectedHash);
                 TryDelete(bundleZip);
 
+                UpdateProgress.Value = 100;
                 Status = LauncherState.ready;
             }
             catch (Exception ex)
             {
                 Status = LauncherState.failed;
-                MessageBox.Show($"Error installing AIR bundle: {ex.Message}");
+                MessageBox.Show($"Error installing game files: {ex.Message}");
             }
         }
 
-        // ── Cleanup helpers ──────────────────────────────────────────
+        private async Task DownloadFileAsync(string url, string outputPath, double completedAt)
+        {
+            using (var response = await Http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead))
+            {
+                response.EnsureSuccessStatusCode();
+
+                var totalBytes = response.Content.Headers.ContentLength;
+                using (var input = await response.Content.ReadAsStreamAsync())
+                using (var output = File.Create(outputPath))
+                {
+                    var buffer = new byte[81920];
+                    long readBytes = 0;
+
+                    while (true)
+                    {
+                        var read = await input.ReadAsync(buffer, 0, buffer.Length);
+                        if (read == 0)
+                            break;
+
+                        await output.WriteAsync(buffer, 0, read);
+                        readBytes += read;
+
+                        if (totalBytes.HasValue && totalBytes.Value > 0)
+                        {
+                            var progress = completedAt * readBytes / totalBytes.Value;
+                            UpdateProgress.Value = Math.Min(completedAt, Math.Max(UpdateProgress.Value, progress));
+                        }
+                    }
+                }
+            }
+        }
+
+        private string FindBundledSwfHash()
+        {
+            var swfInBundleCandidates = new[]
+            {
+                Path.Combine(bundleDir, "WebMain.swf"),
+                Path.Combine(bundleDir, "META-INF", "AIR", "WebMain.swf"),
+            };
+
+            foreach (var candidate in swfInBundleCandidates)
+                if (File.Exists(candidate))
+                    return ComputeFileMd5(candidate);
+
+            return "";
+        }
+
         private static void TryDelete(string path)
         {
             try { if (File.Exists(path)) File.Delete(path); } catch { }
         }
+
         private static void TryDeleteDir(string path)
         {
             try { if (Directory.Exists(path)) Directory.Delete(path, recursive: true); } catch { }
         }
 
-        // ── UI hooks ─────────────────────────────────────────────────
-        private void Window_ContentRendered(object sender, EventArgs e)
+        private async void Window_ContentRendered(object sender, EventArgs e)
         {
-            CheckForUpdates();
+            latencyTimer.Start();
+            await CheckForUpdatesAsync();
         }
 
-        private void Play_Click(object sender, RoutedEventArgs e)
+        private async void LatencyTimer_Tick(object sender, EventArgs e)
+        {
+            await UpdateGameLatencyAsync();
+        }
+
+        private async void Play_Click(object sender, RoutedEventArgs e)
         {
             if (Status == LauncherState.failed)
             {
-                CheckForUpdates();
+                await CheckForUpdatesAsync();
                 return;
             }
 
@@ -431,8 +495,6 @@ namespace GameLauncher
 
             try
             {
-                // WorkingDirectory must be the bundle root so the AIR
-                // runtime finds its sibling DLLs and bundled assets.
                 var startInfo = new ProcessStartInfo(bundleExe)
                 {
                     WorkingDirectory = bundleDir,
@@ -445,6 +507,46 @@ namespace GameLauncher
             {
                 MessageBox.Show($"Could not launch the game: {ex.Message}");
             }
+        }
+
+        private void OpenFolder_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var folderToOpen = Directory.Exists(bundleDir) ? bundleDir : rootPath;
+                Directory.CreateDirectory(folderToOpen);
+                Process.Start(new ProcessStartInfo(folderToOpen)
+                {
+                    UseShellExecute = true
+                });
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Could not open the launcher folder: {ex.Message}");
+            }
+        }
+
+        private void Uninstall_Click(object sender, RoutedEventArgs e)
+        {
+            if (_isBusy)
+                return;
+
+            var result = MessageBox.Show(
+                "Remove the installed game files from this launcher folder?",
+                "Uninstall Yamano Realms",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question);
+
+            if (result != MessageBoxResult.Yes)
+                return;
+
+            TryDelete(hashFile);
+            TryDeleteDir(bundleDir);
+
+            VersionText.Text = FormatVersionLabel("");
+            UpdateProgress.Value = 0;
+            Status = LauncherState.failed;
+            StatusText.Text = "Game files removed";
         }
     }
 }

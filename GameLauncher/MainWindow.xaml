@@ -3,21 +3,95 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        xmlns:local="clr-namespace:GameLauncher"
         mc:Ignorable="d"
         WindowStartupLocation="CenterScreen"
         ContentRendered="Window_ContentRendered"
         ResizeMode="CanMinimize"
         Title="Yamano Realms Launcher"
         SizeToContent="WidthAndHeight"
-        Background="#0c1218">
-    <!--
-        Background is the source image at 1:1 pixel scale (696x448).
-        Window auto-sizes to the image so there's no padding/letterbox,
-        and ResizeMode is locked so the user can't stretch it and
-        re-introduce non-1:1 scaling. UseLayoutRounding + NearestNeighbor
-        keep the pixel art crisp on hi-DPI displays.
-    -->
+        Background="#071018">
+        <Window.Resources>
+        <Style x:Key="PrimaryButton" TargetType="Button">
+            <Setter Property="Height" Value="52"/>
+            <Setter Property="MinWidth" Value="260"/>
+            <Setter Property="Padding" Value="28,0"/>
+            <Setter Property="FontSize" Value="19"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="#fff8e8"/>
+            <Setter Property="Background" Value="#c65f35"/>
+            <Setter Property="BorderBrush" Value="#ffd188"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Root"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="6">
+                            <Border.Effect>
+                                <DropShadowEffect Color="#000000" BlurRadius="12" ShadowDepth="3" Opacity="0.45"/>
+                            </Border.Effect>
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Root" Property="Background" Value="#de7444"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Root" Property="Background" Value="#9f472b"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="Root" Property="Opacity" Value="0.65"/>
+                                <Setter Property="Cursor" Value="Arrow"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="SecondaryButton" TargetType="Button">
+            <Setter Property="Height" Value="34"/>
+            <Setter Property="MinWidth" Value="116"/>
+            <Setter Property="Padding" Value="16,0"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="#e7faff"/>
+            <Setter Property="Background" Value="#263746"/>
+            <Setter Property="BorderBrush" Value="#5d7c8d"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Root"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="5">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Root" Property="Background" Value="#314b5c"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Root" Property="Background" Value="#1a2834"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="Root" Property="Opacity" Value="0.55"/>
+                                <Setter Property="Cursor" Value="Arrow"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
     <Grid Width="696" Height="448" UseLayoutRounding="True">
         <Image Source="/Assets/background.png"
                Stretch="None"
@@ -25,38 +99,146 @@
                VerticalAlignment="Center"
                RenderOptions.BitmapScalingMode="NearestNeighbor"
                RenderOptions.EdgeMode="Aliased"/>
-        <TextBlock Name="GameName"
-                   Text="Yamano Realms"
-                   FontWeight="Bold"
-                   VerticalAlignment="Top"
-                   HorizontalAlignment="Center"
-                   FontSize="36"
-                   Foreground="White"
-                   Margin="0, 18, 0, 0">
-            <TextBlock.Effect>
-                <DropShadowEffect Color="Black" BlurRadius="6" ShadowDepth="2" Opacity="0.85"/>
-            </TextBlock.Effect>
-        </TextBlock>
-        <TextBlock Name="VersionText"
-                   VerticalAlignment="Bottom"
-                   HorizontalAlignment="Right"
-                   FontSize="11"
-                   FontFamily="Consolas"
-                   Foreground="White"
-                   Margin="0, 0, 8, 8">
-            <TextBlock.Effect>
-                <DropShadowEffect Color="Black" BlurRadius="4" ShadowDepth="1" Opacity="0.85"/>
-            </TextBlock.Effect>
-        </TextBlock>
-        <Button Name="PlayButton"
-                Content="Checking For Updates"
-                Click="Play_Click"
-                Height="48"
-                FontSize="20"
-                FontWeight="Bold"
-                Margin="0,0,0,20"
+
+        <Rectangle Fill="#66071118"/>
+        <Rectangle VerticalAlignment="Bottom" Height="174">
+            <Rectangle.Fill>
+                <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                    <GradientStop Color="#00000000" Offset="0"/>
+                    <GradientStop Color="#d9071118" Offset="0.55"/>
+                    <GradientStop Color="#f0071118" Offset="1"/>
+                </LinearGradientBrush>
+            </Rectangle.Fill>
+        </Rectangle>
+
+        <StackPanel VerticalAlignment="Top"
+                    HorizontalAlignment="Center"
+                    Margin="0,22,0,0">
+            <TextBlock Text="Yamano Realms"
+                       FontWeight="Bold"
+                       FontSize="38"
+                       Foreground="#fff8e8"
+                       TextAlignment="Center">
+                <TextBlock.Effect>
+                    <DropShadowEffect Color="Black" BlurRadius="8" ShadowDepth="2" Opacity="0.9"/>
+                </TextBlock.Effect>
+            </TextBlock>
+            <TextBlock Text="Production Realm"
+                       FontSize="13"
+                       FontWeight="SemiBold"
+                       Foreground="#d8f4ff"
+                       TextAlignment="Center"
+                       Margin="0,2,0,0">
+                <TextBlock.Effect>
+                    <DropShadowEffect Color="Black" BlurRadius="5" ShadowDepth="1" Opacity="0.9"/>
+                </TextBlock.Effect>
+            </TextBlock>
+        </StackPanel>
+
+        <Border HorizontalAlignment="Center"
                 VerticalAlignment="Bottom"
-                HorizontalAlignment="Center"
-                MinWidth="260"/>
+                Width="548"
+                MinHeight="176"
+                Margin="0,0,0,24"
+                Padding="22,18"
+                Background="#d7111821"
+                BorderBrush="#4ffff0c2"
+                BorderThickness="1"
+                CornerRadius="8">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Grid.Row="0" Grid.Column="0" Margin="0,0,18,0">
+                    <TextBlock Name="StatusText"
+                               Text="Checking for updates..."
+                               FontSize="18"
+                               FontWeight="SemiBold"
+                               Foreground="#fff8e8"/>
+                    <TextBlock Name="EndpointText"
+                               Text="app.tidansrealm.com"
+                               FontSize="12"
+                               Foreground="#b9d7df"
+                               Margin="0,4,0,0"/>
+                </StackPanel>
+
+                <TextBlock Name="VersionText"
+                           Grid.Row="0"
+                           Grid.Column="1"
+                           VerticalAlignment="Top"
+                           FontSize="12"
+                           FontFamily="Consolas"
+                           Foreground="#e7faff"
+                           TextAlignment="Right"/>
+
+                <ProgressBar Name="UpdateProgress"
+                             Grid.Row="1"
+                             Grid.ColumnSpan="2"
+                             Height="8"
+                             Margin="0,18,0,18"
+                             Minimum="0"
+                             Maximum="100"
+                             Value="0"
+                             Background="#293744"
+                             Foreground="#ffd188"
+                             BorderThickness="0"/>
+
+                <Grid Grid.Row="2" Grid.ColumnSpan="2">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <Ellipse Name="ServerStatusDot"
+                                 Width="9"
+                                 Height="9"
+                                 Fill="#7b8790"
+                                 Margin="0,0,7,0"/>
+                        <TextBlock Name="ServerStatusText"
+                                   Text="Server: checking"
+                                   FontSize="12"
+                                   Foreground="#d8f4ff"
+                                   VerticalAlignment="Center"/>
+                        <TextBlock Text="  /  "
+                                   FontSize="12"
+                                   Foreground="#6d8794"
+                                   VerticalAlignment="Center"/>
+                        <TextBlock Name="LatencyText"
+                                   Text="-- ms"
+                                   FontSize="12"
+                                   Foreground="#d8f4ff"
+                                   VerticalAlignment="Center"/>
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal">
+                        <Button Name="OpenFolderButton"
+                                Style="{StaticResource SecondaryButton}"
+                                Content="Open Folder"
+                                Click="OpenFolder_Click"
+                                Margin="0,0,8,0"/>
+                        <Button Name="UninstallButton"
+                                Style="{StaticResource SecondaryButton}"
+                                Content="Uninstall"
+                                Click="Uninstall_Click"/>
+                    </StackPanel>
+                </Grid>
+
+                <Button Name="PlayButton"
+                        Grid.Row="3"
+                        Grid.ColumnSpan="2"
+                        Style="{StaticResource PrimaryButton}"
+                        Content="Checking For Updates"
+                        Click="Play_Click"
+                        Margin="0,16,0,0"
+                        HorizontalAlignment="Center"/>
+            </Grid>
+        </Border>
     </Grid>
 </Window>
