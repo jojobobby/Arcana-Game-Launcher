@@ -13,6 +13,7 @@ on:
       - 'main'
     paths:
       - 'GameLauncher/**'
+      - 'GameLauncher.Tests/**'
       - 'GameLauncher.sln'
       - '.github/workflows/build-launcher.yml'
 
@@ -46,8 +47,8 @@ jobs:
         run: |
           # AssemblyVersion / FileVersion need a numeric MAJOR.MINOR.BUILD.REV
           # form. We bake the GH run_number into BUILD so each build is
-          # distinct; the player-visible "version" still comes from the SWF
-          # hash at runtime, not this string.
+          # distinct; the player-visible version is the game client's
+          # (version + build id from the server's /client/metadata), not this.
           BUILD_NUMBER=${{ github.run_number }}
           VERSION="1.0.${BUILD_NUMBER}.0"
           RELEASE_TAG="launcher-${{ steps.sha.outputs.short }}"
@@ -65,12 +66,18 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.nuget/packages
-          key: ${{ runner.os }}-nuget-${{ hashFiles('GameLauncher/**/*.csproj') }}
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
           restore-keys: |
             ${{ runner.os }}-nuget-
 
       - name: Restore
         run: dotnet restore GameLauncher.sln
+
+      # The update flow (metadata validation, verified download, atomic
+      # swap, self-update) is covered here against a fake server; a red
+      # test must never reach players as a launcher that cannot install.
+      - name: Test
+        run: dotnet test GameLauncher.Tests/GameLauncher.Tests.csproj --no-restore -c Release --verbosity normal
 
       # Single-file self-contained binary — no .NET install needed on the
       # player's machine. Native libs are baked in via
@@ -79,7 +86,7 @@ jobs:
       - name: Publish
         shell: pwsh
         run: |
-          Write-Host "Publishing YamanoRealmsLauncher v${{ steps.version.outputs.version }}"
+          Write-Host "Publishing ArcanaLauncher v${{ steps.version.outputs.version }}"
           dotnet publish GameLauncher/GameLauncher.csproj `
             -c Release `
             -r win-x64 `
@@ -94,11 +101,11 @@ jobs:
             -p:FileVersion=${{ steps.version.outputs.version }} `
             -o publish
 
-          if (-Not (Test-Path "publish\YamanoRealmsLauncher.exe")) {
+          if (-Not (Test-Path "publish\ArcanaLauncher.exe")) {
             Write-Error "Build output not found"
             exit 1
           }
-          $size = (Get-Item "publish\YamanoRealmsLauncher.exe").Length
+          $size = (Get-Item "publish\ArcanaLauncher.exe").Length
           Write-Host "Built ($([math]::Round($size/1MB, 2)) MB)"
 
       # ── Code signing ──────────────────────────────────────────────────
@@ -158,8 +165,8 @@ jobs:
             /fd sha256 `
             /tr http://timestamp.digicert.com `
             /td sha256 `
-            /d "Yamano Realms Launcher" `
-            publish\YamanoRealmsLauncher.exe
+            /d "Arcana Launcher" `
+            publish\ArcanaLauncher.exe
 
           if ($LASTEXITCODE -ne 0) {
             Remove-Item $certPath -Force
@@ -167,7 +174,7 @@ jobs:
             exit 1
           }
 
-          & $signtool verify /pa /v publish\YamanoRealmsLauncher.exe
+          & $signtool verify /pa /v publish\ArcanaLauncher.exe
           if ($LASTEXITCODE -ne 0) {
             Remove-Item $certPath -Force
             Write-Error "Signature verification failed"
@@ -193,16 +200,16 @@ jobs:
         shell: bash
         run: |
           cd publish
-          MD5=$(powershell -Command "(Get-FileHash YamanoRealmsLauncher.exe -Algorithm MD5).Hash" | tr -d '\r' | tr '[:upper:]' '[:lower:]')
-          SHA256=$(powershell -Command "(Get-FileHash YamanoRealmsLauncher.exe -Algorithm SHA256).Hash" | tr -d '\r' | tr '[:upper:]' '[:lower:]')
-          SIZE=$(powershell -Command "(Get-Item YamanoRealmsLauncher.exe).Length" | tr -d '\r')
+          MD5=$(powershell -Command "(Get-FileHash ArcanaLauncher.exe -Algorithm MD5).Hash" | tr -d '\r' | tr '[:upper:]' '[:lower:]')
+          SHA256=$(powershell -Command "(Get-FileHash ArcanaLauncher.exe -Algorithm SHA256).Hash" | tr -d '\r' | tr '[:upper:]' '[:lower:]')
+          SIZE=$(powershell -Command "(Get-Item ArcanaLauncher.exe).Length" | tr -d '\r')
 
           cat > launcher-metadata.json <<EOF
           {
             "version": "${{ steps.version.outputs.version }}",
             "commit": "${{ github.sha }}",
             "build_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-            "file_name": "YamanoRealmsLauncher.exe",
+            "file_name": "ArcanaLauncher.exe",
             "file_size": $SIZE,
             "md5": "$MD5",
             "sha256": "$SHA256",
@@ -214,9 +221,9 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: YamanoRealmsLauncher-${{ steps.sha.outputs.short }}
+          name: ArcanaLauncher-${{ steps.sha.outputs.short }}
           path: |
-            publish/YamanoRealmsLauncher.exe
+            publish/ArcanaLauncher.exe
             publish/launcher-metadata.json
           retention-days: 30
 
@@ -230,7 +237,7 @@ jobs:
       - name: Download artifact
         uses: actions/download-artifact@v4
         with:
-          name: YamanoRealmsLauncher-${{ needs.build.outputs.sha_short }}
+          name: ArcanaLauncher-${{ needs.build.outputs.sha_short }}
           path: release-assets
 
       - name: Delete prior release for this SHA (if any)
@@ -248,9 +255,9 @@ jobs:
 
           # First-run instructions for unsigned builds. SmartScreen pops on
           # the launcher binary because it's downloaded with Mark-of-the-Web
-          # from a browser; the AIR captive runtime exe the launcher
-          # extracts later doesn't carry MOTW and won't trigger SmartScreen
-          # at all, so we only need to talk about the very first launch.
+          # from a browser; the game client the launcher installs later
+          # doesn't carry MOTW and won't trigger SmartScreen at all, so we
+          # only need to talk about the very first launch.
           if [ "$SIGNED" = "true" ]; then
             SIGNED_BADGE="✓ Code-signed — no SmartScreen warning expected"
             FIRST_RUN_BLOCK=""
@@ -276,17 +283,17 @@ jobs:
           warning stops appearing for new players.
 
           The launcher itself is the only file that triggers this warning — the
-          actual game (Adobe AIR runtime + SWF) is installed *by* the launcher to a
-          local folder and launches without any SmartScreen prompt.
+          actual game (the native `Arcana.exe` client) is installed *by* the
+          launcher to a folder beside it and launches without any SmartScreen prompt.
 
           ### Verifying the download (optional, paranoid mode)
 
           If you'd like to confirm the file you downloaded matches what CI built,
-          right-click `YamanoRealmsLauncher.exe` → Properties → check the size, or
+          right-click `ArcanaLauncher.exe` → Properties → check the size, or
           run in PowerShell:
 
           ```powershell
-          Get-FileHash YamanoRealmsLauncher.exe -Algorithm SHA256
+          Get-FileHash ArcanaLauncher.exe -Algorithm SHA256
           ```
 
           and compare against the `sha256` field in `launcher-metadata.json`.
@@ -295,7 +302,7 @@ jobs:
           fi
 
           {
-            echo "## Yamano Realms Launcher ${{ needs.build.outputs.version }}"
+            echo "## Arcana Launcher ${{ needs.build.outputs.version }}"
             echo ""
             echo "**Commit:** \`${{ github.sha }}\`"
             echo "**Built:** $(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -303,12 +310,12 @@ jobs:
             echo ""
             echo "### Download"
             echo ""
-            echo "Grab **\`YamanoRealmsLauncher.exe\`** from the Assets list below and run it."
+            echo "Grab **\`ArcanaLauncher.exe\`** from the Assets list below and run it."
             echo "It's a single self-contained file — no installer, no extra dependencies."
             echo "$FIRST_RUN_BLOCK"
             echo ""
             echo "### Assets"
-            echo "- \`YamanoRealmsLauncher.exe\` — single-file self-contained Windows launcher (no .NET install required)"
+            echo "- \`ArcanaLauncher.exe\` — single-file self-contained Windows launcher (no .NET install required)"
             echo "- \`launcher-metadata.json\` — build metadata including MD5/SHA256 of the binary"
           } > release-notes.md
 
@@ -333,9 +340,16 @@ jobs:
           # binary without a code change.
           gh release delete latest --yes --cleanup-tag 2>/dev/null || true
 
+          # Launchers from before the rename self-update by downloading
+          # latest/YamanoRealmsLauncher.exe and swapping themselves for it.
+          # Publishing this build under the old name too moves every one of
+          # them onto the new launcher without anyone re-downloading by hand.
+          # Only 'latest' carries it; drop this once old installs are gone.
+          cp release-assets/ArcanaLauncher.exe release-assets/YamanoRealmsLauncher.exe
+
           # Reuse the same body as the per-SHA release — players who land on
           # `releases/latest` get the same first-run guidance.
           gh release create latest \
-            --title "Latest Yamano Realms Launcher" \
+            --title "Latest Arcana Launcher" \
             --notes-file release-notes.md \
             release-assets/*

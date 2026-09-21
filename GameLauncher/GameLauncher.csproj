@@ -5,7 +5,7 @@
     <TargetFramework>net9.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
     <RootNamespace>GameLauncher</RootNamespace>
-    <AssemblyName>YamanoRealmsLauncher</AssemblyName>
+    <AssemblyName>ArcanaLauncher</AssemblyName>
     <ApplicationIcon>TidansIcon2.ico</ApplicationIcon>
     <ApplicationManifest>Properties\app.manifest</ApplicationManifest>
     <LangVersion>latest</LangVersion>
@@ -14,9 +14,9 @@
     <!-- Version overridden by CI via -p:Version=... -->
     <Version>1.0.0</Version>
     <Company>Tidan's Realm</Company>
-    <Product>Tidan's Realm Game Launcher</Product>
-    <AssemblyTitle>Tidan's Realm Game Launcher</AssemblyTitle>
-    <Description>Auto-updating launcher for Tidan's Realm.</Description>
+    <Product>Arcana Launcher</Product>
+    <AssemblyTitle>Arcana Launcher</AssemblyTitle>
+    <Description>Auto-updating launcher for Arcana.</Description>
   </PropertyGroup>
 
   <ItemGroup>
@@ -30,6 +30,10 @@
     <Resource Include="Assets\Title_Screen_2.png" />
     <Resource Include="Assets\Title_Screen_3.png" />
     <Resource Include="Assets\Title.v1.0.0.png" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="GameLauncher.Tests" />
   </ItemGroup>
 
 </Project>

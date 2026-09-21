@@ -3,6 +3,16 @@
 **/obj/
 **/publish/
 
+# What a launcher installs when it is run from the repo folder
+/Arcana/
+/Arcana-development/
+/ArcanaLauncher.exe
+# Leftovers of the retired SWF/AIR launcher
+/YamanoRealms/
+/YamanoRealmsLauncher.exe
+/WebMain.swf
+/Hash.txt
+
 # IDE
 .vs/
 .vscode/

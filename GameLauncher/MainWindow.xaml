@@ -7,7 +7,7 @@
         WindowStartupLocation="CenterScreen"
         ContentRendered="Window_ContentRendered"
         ResizeMode="CanMinimize"
-        Title="Tidan's Realm Game Launcher"
+        Title="Arcana Launcher"
         SizeToContent="WidthAndHeight"
         Background="#071018">
         <Window.Resources>
@@ -255,7 +255,8 @@
                    Height="131"
                    Stretch="Uniform"
                    RenderOptions.BitmapScalingMode="HighQuality"/>
-            <TextBlock Text="Production"
+            <TextBlock Name="ChannelText"
+                       Text="Production"
                        FontSize="13"
                        FontWeight="SemiBold"
                        Foreground="#d8f4ff"
