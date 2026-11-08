@@ -6,6 +6,7 @@
         mc:Ignorable="d"
         WindowStartupLocation="CenterScreen"
         ContentRendered="Window_ContentRendered"
+        Closing="Window_Closing"
         ResizeMode="CanMinimize"
         Title="Arcana Launcher"
         SizeToContent="WidthAndHeight"
@@ -249,10 +250,10 @@
 
         <StackPanel VerticalAlignment="Top"
                     HorizontalAlignment="Center"
-                    Margin="0,14,0,0">
-            <Image Source="/Assets/Title.v1.0.0.png"
-                   Width="294"
-                   Height="131"
+                    Margin="0,8,0,0">
+            <Image Source="/Assets/Logo.png"
+                   Width="300"
+                   Height="150"
                    Stretch="Uniform"
                    RenderOptions.BitmapScalingMode="HighQuality"/>
             <TextBlock Name="ChannelText"
@@ -267,6 +268,42 @@
                 </TextBlock.Effect>
             </TextBlock>
         </StackPanel>
+
+        <!-- Shown on a copy run from outside its install (Downloads): offers the installer; and after a move, says so. -->
+        <Border Name="Banner"
+                Visibility="Collapsed"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Top"
+                Width="548"
+                Margin="0,184,0,0"
+                Background="#e60b1822"
+                BorderBrush="#4f6b7a"
+                BorderThickness="1"
+                CornerRadius="6"
+                Padding="14,6">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center" Margin="0,0,12,0">
+                    <TextBlock Name="BannerTitle"
+                               FontSize="13"
+                               FontWeight="SemiBold"
+                               Foreground="#fff8e8"/>
+                    <TextBlock Name="BannerText"
+                               FontSize="12"
+                               Foreground="#b9d7df"
+                               TextWrapping="Wrap"
+                               Margin="0,2,0,0"/>
+                </StackPanel>
+                <Button Name="BannerButton"
+                        Grid.Column="1"
+                        Style="{StaticResource DownloadButton}"
+                        VerticalAlignment="Center"
+                        Click="Banner_Click"/>
+            </Grid>
+        </Border>
 
         <Grid HorizontalAlignment="Center"
               VerticalAlignment="Bottom"
@@ -290,21 +327,36 @@
                                FontSize="18"
                                FontWeight="SemiBold"
                                Foreground="#fff8e8"/>
-                    <TextBlock Name="EndpointText"
+                    <TextBlock Name="DetailText"
                                Text="app.tidansrealm.com"
                                FontSize="12"
                                Foreground="#b9d7df"
+                               TextWrapping="Wrap"
                                Margin="0,4,0,0"/>
                 </StackPanel>
 
-                <TextBlock Name="VersionText"
-                           Grid.Row="0"
-                           Grid.Column="1"
-                           VerticalAlignment="Top"
-                           FontSize="12"
-                           FontFamily="Consolas"
-                           Foreground="#e7faff"
-                           TextAlignment="Right"/>
+                <StackPanel Grid.Row="0"
+                            Grid.Column="1"
+                            VerticalAlignment="Top">
+                    <TextBlock Name="VersionText"
+                               FontSize="12"
+                               FontFamily="Consolas"
+                               Foreground="#e7faff"
+                               TextAlignment="Right"/>
+                    <TextBlock Name="LauncherVersionText"
+                               FontSize="12"
+                               FontFamily="Consolas"
+                               Foreground="#9fb6c1"
+                               TextAlignment="Right"
+                               Margin="0,3,0,0"/>
+                    <TextBlock FontSize="12"
+                               TextAlignment="Right"
+                               Margin="0,3,0,0">
+                        <Hyperlink Name="OpenLogsLink"
+                                   Foreground="#9fd1ff"
+                                   Click="OpenLogs_Click">Open logs</Hyperlink>
+                    </TextBlock>
+                </StackPanel>
 
                 <ProgressBar Name="UpdateProgress"
                              Grid.Row="1"
@@ -352,7 +404,7 @@
                                 Margin="0,0,8,0"/>
                         <Button Name="PlayButton"
                                 Style="{StaticResource DownloadButton}"
-                                Content="Download"
+                                Content="Install"
                                 Click="Play_Click"/>
                     </StackPanel>
                 </Grid>
@@ -365,12 +417,19 @@
                 HorizontalAlignment="Left"
                 VerticalAlignment="Bottom"
                 Margin="18,0,0,18"/>
-        <Button Name="UninstallButton"
-                Style="{StaticResource DangerButton}"
-                Content="Uninstall"
-                Click="Uninstall_Click"
-                HorizontalAlignment="Right"
-                VerticalAlignment="Bottom"
-                Margin="0,0,18,18"/>
+        <StackPanel Orientation="Horizontal"
+                    HorizontalAlignment="Right"
+                    VerticalAlignment="Bottom"
+                    Margin="0,0,18,18">
+            <Button Name="VerifyButton"
+                    Style="{StaticResource SecondaryButton}"
+                    Content="Verify Files"
+                    Click="Verify_Click"
+                    Margin="0,0,8,0"/>
+            <Button Name="UninstallButton"
+                    Style="{StaticResource DangerButton}"
+                    Content="Uninstall"
+                    Click="Uninstall_Click"/>
+        </StackPanel>
     </Grid>
 </Window>

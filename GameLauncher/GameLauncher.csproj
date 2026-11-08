@@ -6,33 +6,34 @@
     <UseWPF>true</UseWPF>
     <RootNamespace>GameLauncher</RootNamespace>
     <AssemblyName>ArcanaLauncher</AssemblyName>
-    <ApplicationIcon>TidansIcon2.ico</ApplicationIcon>
+    <ApplicationIcon>ArcanaLauncher.ico</ApplicationIcon>
     <ApplicationManifest>Properties\app.manifest</ApplicationManifest>
     <LangVersion>latest</LangVersion>
     <Nullable>disable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
     <!-- Version overridden by CI via -p:Version=... -->
     <Version>1.0.0</Version>
-    <Company>Tidan's Realm</Company>
+    <Company>Tidan Games LLC</Company>
     <Product>Arcana Launcher</Product>
     <AssemblyTitle>Arcana Launcher</AssemblyTitle>
-    <Description>Auto-updating launcher for Arcana.</Description>
+    <Description>Arcana Launcher</Description>
+    <Copyright>Copyright 2026 Tidan Games LLC</Copyright>
+    <NeutralLanguage>en-US</NeutralLanguage>
+    <!-- CI passes -p:ArcanaReleaseBuild=true. Only a release build updates itself from GitHub and offers the
+         installer; a local build never replaces itself with a published one (LauncherInfo.IsReleaseBuild). -->
+    <ArcanaReleaseBuild Condition="'$(ArcanaReleaseBuild)' == ''">false</ArcanaReleaseBuild>
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- The auto-generated AssemblyInfo would collide with the legacy
-         Properties\AssemblyInfo.cs left over from the old project, so
-         exclude that file from compilation. The SDK derives the same
-         metadata from the PropertyGroup above. -->
-    <Compile Remove="Properties\AssemblyInfo.cs" />
     <Resource Include="Assets\Title_Screen_0.png" />
     <Resource Include="Assets\Title_Screen_1.png" />
     <Resource Include="Assets\Title_Screen_2.png" />
     <Resource Include="Assets\Title_Screen_3.png" />
-    <Resource Include="Assets\Title.v1.0.0.png" />
+    <Resource Include="Assets\Logo.png" />
   </ItemGroup>
 
   <ItemGroup>
+    <AssemblyMetadata Include="ArcanaReleaseBuild" Value="$(ArcanaReleaseBuild)" />
     <InternalsVisibleTo Include="GameLauncher.Tests" />
   </ItemGroup>
 

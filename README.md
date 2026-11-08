@@ -1,98 +1,110 @@
 # Arcana Launcher
 
-Auto-updating Windows launcher for **Arcana**. It is the only way to get the game: it installs the native client, keeps it in step with the server, and starts it.
+The Windows launcher for **Arcana**, and the only way to get the game: it installs the native client, keeps it in
+step with the server, and starts it. It keeps itself up to date too.
 
 ## Download
 
-Grab the latest build:
+**[Download Arcana Launcher](https://tidangames.com/download/windows)** (the website redirects to
+`ArcanaLauncherSetup.exe` on this repo's latest release).
 
-➡ **[Download ArcanaLauncher.exe](https://github.com/jojobobby/Arcana-Game-Launcher/releases/latest/download/ArcanaLauncher.exe)**
+Run `ArcanaLauncherSetup.exe`. It installs Arcana Launcher for your Windows account, with no admin rights, into
+`%LocalAppData%\Programs\Arcana Launcher`, adds a Start menu shortcut (and a desktop one, unless you untick it) and an
+entry in Windows' Apps list. Then open Arcana Launcher and click **Install**.
 
-Single self-contained file — no installer, no .NET runtime to install separately. Drop it in any folder; the launcher creates an `Arcana/` subfolder alongside itself the first time you hit Download.
+The launcher is not code-signed yet, so on first run Windows may say it protected your PC: click **More info**, then
+**Run anyway**.
 
-Already have the old `YamanoRealmsLauncher.exe`? Open it and press **Update**: it replaces itself with this launcher.
+Windows 10 or 11, 64-bit.
 
-## First-time setup (~10 seconds)
+## Where things go
 
-The launcher is a brand-new binary that Windows hasn't built up reputation for yet, so on **first launch only** you'll see:
+| What | Where |
+|---|---|
+| The launcher | `%LocalAppData%\Programs\Arcana Launcher\ArcanaLauncher.exe` |
+| The game | `%LocalAppData%\Programs\Arcana Launcher\Arcana\` (`Arcana-development\` for testers) |
+| Launcher log | `%LocalAppData%\Arcana Launcher\logs\launcher.log` (the **Open logs** link) |
+| Downloads | `%LocalAppData%\Arcana Launcher\downloads\` (game zips by SHA-256; the last two are kept) |
+| The game's own settings and data | `%LocalAppData%\Arcana\` and `%AppData%\Arcana\Arcana\` |
 
-> **Windows protected your PC**
-> Microsoft Defender SmartScreen prevented an unrecognized app from starting.
-
-To run it:
-
-1. Click **More info** (small link, easy to miss)
-2. Click **Run anyway**
-
-You only have to do this once. After enough players download a given build, Windows trusts it automatically and the warning stops appearing for new players.
-
-The launcher itself is the only file that triggers this — the actual game (`Arcana.exe`, which the launcher installs into a local folder) runs without any SmartScreen prompt.
+Uninstall from Windows' Apps list. It removes the launcher, the game files and the launcher's data, then asks whether
+to remove the game's own settings and data too (default: keep them).
 
 ## What it does
 
-1. Asks the game server which client it was built with (`GET https://app.tidansrealm.com/client/metadata`)
-2. Compares that **build id** with the one recorded in `Arcana/client-version.json`
-3. If they differ, downloads `Arcana-client.zip` from the same server (`/client/download`), checks its SHA-256 against the metadata, unpacks it to a fresh folder and swaps it in — a failed or corrupt download never touches a working install
-4. Hits Play → starts `Arcana/Arcana.exe`
+- **Play** checks the server's build, installs, updates or repairs the game when needed, starts it and closes. The
+  game server admits only the client build it serves, so an outdated client is never played.
+- **Update** does the same without starting the game. **Verify Files** hashes every game file against the release's
+  file list and repairs what differs. **Uninstall** removes the game files (the launcher stays).
+- Downloads resume where they stopped (a cut connection, Cancel, closing the launcher), retry a busy or unreachable
+  server, give up on a stall after 30 s and try again, and are checked file by file before anything is replaced: a bad
+  download never touches a working install.
+- It waits for a running game to close before updating it, checks free disk space first, and puts the game back exactly
+  as it was if anything fails.
+- It updates itself on every start, from this repo's latest release. If the new version does not start, it puts the
+  old one back and carries on.
+- One launcher runs at a time; starting it again brings the open one forward.
+- A copy run from Downloads (or anywhere outside its install) offers to install itself, and takes the game it already
+  downloaded along.
 
-The server's Docker image contains the client built from the same commit as the server itself, so the launcher always installs the client that matches the server you are about to play on.
+### How the game is served
 
-The version in the corner — `Arcana v5.2.9 (8a991dfa1c24)` — is the game version plus the build id. The build id is the git tree of the client source, so two players who see the same id are running the same client, and a server update that did not change the client does not make anyone download it again.
-
-The launcher also keeps itself current: it reads `launcher-metadata.json` from this repo's `latest` release and offers **Update Available** when its own SHA-256 differs.
+Nothing in this repo builds the game. The Arcana repo's deploy workflows compile the client
+(`tools/build_client_release.ps1`), bake `Arcana-client.zip` and `client-metadata.json` into the server image, and the
+server serves them at `/client/download` (resumable) and `/client/metadata`. The build id is the git tree of the client
+source, so a server deploy that did not change the client costs players nothing. `GameLauncher/ClientMetadata.cs` is
+this side of that contract.
 
 ### Development channel (testers)
 
-A client is compiled for exactly one environment. To install and play the development build instead:
-
 ```powershell
-.\ArcanaLauncher.exe --channel development
+& "$env:LOCALAPPDATA\Programs\Arcana Launcher\ArcanaLauncher.exe" --channel development
 ```
 
-It talks to `devapp.tidansrealm.com`, installs into `Arcana-development/` beside the production install, and refuses any client whose metadata is not marked `development` (and the other way round).
+It talks to `devapp.tidansrealm.com`, installs into `Arcana-development\` beside production, and refuses a client
+that is not marked `development` (and the other way round).
 
-## Verifying the download (optional, paranoid mode)
+## Building
 
-```powershell
-Get-FileHash ArcanaLauncher.exe -Algorithm SHA256
-```
-
-Compare to the `sha256` field in `launcher-metadata.json` on the same GitHub release.
-
-## Reporting "the launcher won't open"
-
-If SmartScreen blocks it and the "Run anyway" path doesn't appear, check:
-
-- Some corporate / school networks have policies that hide the "Run anyway" option entirely — try downloading on a personal machine
-- Antivirus other than Defender may quarantine the file silently — add an exception for the folder you saved it in
-- If neither, file an issue with the SmartScreen reason text shown in Defender
-
-"The game files are in use" when updating or uninstalling means `Arcana.exe` is still running — close the game first.
-
-## Building from source
-
-Requires .NET 9 SDK + Visual Studio 2022 (for the WPF designer) or VS Build Tools.
+.NET 9 SDK, and Inno Setup 6.3 or newer for the installer.
 
 ```powershell
-dotnet build GameLauncher.sln -c Release
 dotnet test GameLauncher.Tests
 ```
 
-The tests cover the whole update flow — metadata validation, verified download, atomic install/update/rollback, channel separation and self-update — against an in-process fake server, so they need no network.
-
-Or to reproduce a CI-equivalent single-file build:
-
 ```powershell
-dotnet publish GameLauncher/GameLauncher.csproj `
-  -c Release -r win-x64 --self-contained true `
-  -p:PublishSingleFile=true `
-  -p:IncludeNativeLibrariesForSelfExtract=true `
-  -p:EnableCompressionInSingleFile=true `
-  -o publish
+dotnet publish GameLauncher/GameLauncher.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -o publish
 ```
 
-Output lands at `publish/ArcanaLauncher.exe`.
+```powershell
+& "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" "/DSourceExe=$PWD\publish\ArcanaLauncher.exe" "/O$PWD\publish" installer\ArcanaLauncher.iss
+```
 
-## Where the client comes from
+A local build never updates itself from GitHub (only CI's `-p:ArcanaReleaseBuild=true` builds do). To try it against a
+local server, set `ARCANA_LAUNCHER_SERVER_URL` (a game server) and `ARCANA_LAUNCHER_RELEASES_URL` (where releases come
+from); release builds ignore both. A debug build also takes `--preview <state>` to show the window in one state with no
+network.
 
-Nothing in this repo builds the game. The Arcana repo's deploy workflows compile the native Haxe client (`tools/build_client_release.ps1`), bake `Arcana-client.zip` + `client-metadata.json` into the server image, and the server serves them at `/client/download` and `/client/metadata`. The shape of that metadata is the contract between the two repos; `GameLauncher/ClientMetadata.cs` is this side of it.
+## Releasing
+
+Pushing to `main` (or running the `build-launcher` workflow) tests, publishes, builds the installer and creates release
+`v1.0.<run>.0` marked Latest, with `ArcanaLauncherSetup.exe`, `ArcanaLauncher.exe` and `launcher-metadata.json`. It
+also updates the old `latest` tag in place for launchers up to 1.0.9, which update from there.
+
+Checklist for a release players will see:
+
+1. CI green, and the release has all three files.
+2. `https://tidangames.com/download/windows` hands out the new installer.
+3. While unsigned: submit the new `ArcanaLauncherSetup.exe` and `ArcanaLauncher.exe` to Microsoft's file submission
+   portal (as a software developer) so Defender learns them sooner.
+4. Remove the `YamanoRealmsLauncher.exe` copy from the workflow once its download count on the `latest` tag stops
+   rising.
+
+## Reporting "the launcher won't open"
+
+- Send `%LocalAppData%\Arcana Launcher\logs\launcher.log` (user names and profile folders are already replaced by
+  `%USERNAME%` and the like).
+- An antivirus may quarantine an unsigned file silently. Arcana Launcher says so when it finds `Arcana.exe` missing.
+- Run the launcher from its install, not from Downloads: Windows loads some DLLs from the folder an exe runs in, and a
+  stray one there (Lovely's `version.dll` did this) can crash it before any of its own code runs. The installer is safe
+  to run from Downloads.

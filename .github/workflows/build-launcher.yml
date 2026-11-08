@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       mark_latest:
-        description: 'Also update the floating "latest" release tag'
+        description: 'Make this the release players get (Latest), and update the old "latest" tag'
         required: false
         type: boolean
         default: true
@@ -15,6 +15,7 @@ on:
       - 'GameLauncher/**'
       - 'GameLauncher.Tests/**'
       - 'GameLauncher.sln'
+      - 'installer/**'
       - '.github/workflows/build-launcher.yml'
 
 permissions:
@@ -28,7 +29,6 @@ jobs:
   build:
     runs-on: windows-latest
     outputs:
-      sha_short: ${{ steps.sha.outputs.short }}
       version: ${{ steps.version.outputs.version }}
       release_tag: ${{ steps.version.outputs.release_tag }}
       signed: ${{ steps.sign.outputs.signed }}
@@ -36,26 +36,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Get short SHA
-        id: sha
-        shell: bash
-        run: echo "short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
-
+      # File versions need MAJOR.MINOR.BUILD.REV; the run number makes every build distinct. Each release gets its own
+      # tag (v1.0.N.0), whose files never change: a launcher downloads the exe from the tag its metadata names.
       - name: Set version info
         id: version
         shell: bash
         run: |
-          # AssemblyVersion / FileVersion need a numeric MAJOR.MINOR.BUILD.REV
-          # form. We bake the GH run_number into BUILD so each build is
-          # distinct; the player-visible version is the game client's
-          # (version + build id from the server's /client/metadata), not this.
-          BUILD_NUMBER=${{ github.run_number }}
-          VERSION="1.0.${BUILD_NUMBER}.0"
-          RELEASE_TAG="launcher-${{ steps.sha.outputs.short }}"
+          VERSION="1.0.${{ github.run_number }}.0"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "release_tag=$RELEASE_TAG" >> $GITHUB_OUTPUT
+          echo "release_tag=v$VERSION" >> $GITHUB_OUTPUT
           echo "Version: $VERSION"
-          echo "Release tag: $RELEASE_TAG"
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
@@ -73,20 +63,16 @@ jobs:
       - name: Restore
         run: dotnet restore GameLauncher.sln
 
-      # The update flow (metadata validation, verified download, atomic
-      # swap, self-update) is covered here against a fake server; a red
-      # test must never reach players as a launcher that cannot install.
+      # Downloads (resume, retries, stalls), install, repair, uninstall, self-update and the platform pieces they rest
+      # on (renaming a running exe, the single-instance mutex) against a fake server. A red test never ships.
       - name: Test
         run: dotnet test GameLauncher.Tests/GameLauncher.Tests.csproj --no-restore -c Release --verbosity normal
 
-      # Single-file self-contained binary — no .NET install needed on the
-      # player's machine. Native libs are baked in via
-      # IncludeNativeLibrariesForSelfExtract so the .exe is the only file
-      # the user has to keep.
+      # Single-file, self-contained: no .NET install needed on the player's PC. ArcanaReleaseBuild makes this the build
+      # that updates itself from GitHub and offers the installer (GameLauncher/LauncherInfo.cs).
       - name: Publish
         shell: pwsh
         run: |
-          Write-Host "Publishing ArcanaLauncher v${{ steps.version.outputs.version }}"
           dotnet publish GameLauncher/GameLauncher.csproj `
             -c Release `
             -r win-x64 `
@@ -96,41 +82,21 @@ jobs:
             -p:EnableCompressionInSingleFile=true `
             -p:DebugType=none `
             -p:DebugSymbols=false `
+            -p:ArcanaReleaseBuild=true `
             -p:Version=${{ steps.version.outputs.version }} `
             -p:AssemblyVersion=${{ steps.version.outputs.version }} `
             -p:FileVersion=${{ steps.version.outputs.version }} `
             -o publish
-
-          if (-Not (Test-Path "publish\ArcanaLauncher.exe")) {
-            Write-Error "Build output not found"
-            exit 1
+          if (-not (Test-Path publish\ArcanaLauncher.exe)) { throw 'Build output not found' }
+          $info = (Get-Item publish\ArcanaLauncher.exe).VersionInfo
+          if ($info.ProductName -ne 'Arcana Launcher' -or $info.CompanyName -ne 'Tidan Games LLC' -or $info.FileVersion -ne '${{ steps.version.outputs.version }}') {
+            throw "Unexpected file info: '$($info.ProductName)' '$($info.CompanyName)' $($info.FileVersion)"
           }
-          $size = (Get-Item "publish\ArcanaLauncher.exe").Length
-          Write-Host "Built ($([math]::Round($size/1MB, 2)) MB)"
+          Write-Host "Built Arcana Launcher $($info.FileVersion) ($([math]::Round((Get-Item publish\ArcanaLauncher.exe).Length / 1MB, 2)) MB)"
 
-      # ── Code signing ──────────────────────────────────────────────────
-      #
-      # Skipped automatically when no cert secret is configured, so the
-      # workflow still produces a (warned-about) binary while you're
-      # waiting on a cert. To enable signing, add two repo secrets:
-      #
-      #   CODE_SIGN_CERT_BASE64   - your .pfx file, base64 encoded
-      #                             (powershell: [Convert]::ToBase64String([IO.File]::ReadAllBytes('cert.pfx')) )
-      #   CODE_SIGN_PASSWORD      - the .pfx password
-      #
-      # Cert options ranked by SmartScreen friction:
-      #   - EV cert (DigiCert/Sectigo, ~$300-500/yr, hardware token):
-      #       Immediate SmartScreen trust, no "unknown publisher" warnings.
-      #   - Azure Trusted Signing (~$10/mo, Microsoft-managed):
-      #       Builds reputation quickly. Use azure/trusted-signing-action
-      #       instead of signtool below.
-      #   - OV cert (~$70-200/yr): Builds reputation slowly over many
-      #       downloads. Players will see warnings until reputation accrues.
-      #   - Self-signed: Signs but doesn't pass SmartScreen. Useful for
-      #       testing only — players will still see warnings.
-      #
-      # Signed binaries are timestamped against DigiCert's free TSA so
-      # they remain valid after the cert expires.
+      # Skipped while no certificate is set up (the user chose to ship unsigned for now). Note: a public code signing
+      # certificate issued after 2023-06-01 keeps its key on hardware and cannot be exported as a .pfx, so signing will
+      # move to a cloud signer (docs/superpowers/specs/2026-11-07-arcana-launcher-design.md in the Arcana repo, step 8).
       - name: Sign launcher
         id: sign
         if: ${{ env.HAS_CERT == 'true' }}
@@ -142,214 +108,141 @@ jobs:
         run: |
           $certPath = Join-Path $env:RUNNER_TEMP "codesign.pfx"
           [IO.File]::WriteAllBytes($certPath, [Convert]::FromBase64String($env:CODE_SIGN_CERT_BASE64))
-
-          # signtool ships with the Windows SDK; windows-latest has it on PATH
-          # via the standard Visual Studio install. Probe in case it isn't.
-          $signtool = (Get-Command signtool.exe -ErrorAction SilentlyContinue)?.Source
-          if (-not $signtool) {
-            $signtool = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' -Recurse `
-              -Filter signtool.exe |
-              Where-Object { $_.FullName -match 'x64' } |
-              Sort-Object FullName -Descending |
-              Select-Object -First 1 -ExpandProperty FullName
+          try {
+            $signtool = (Get-Command signtool.exe -ErrorAction SilentlyContinue)?.Source
+            if (-not $signtool) {
+              $signtool = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' -Recurse -Filter signtool.exe |
+                Where-Object { $_.FullName -match 'x64' } | Sort-Object FullName -Descending |
+                Select-Object -First 1 -ExpandProperty FullName
+            }
+            if (-not $signtool) { throw 'signtool.exe not found' }
+            & $signtool sign /f $certPath /p $env:CODE_SIGN_PASSWORD /fd sha256 /tr http://timestamp.digicert.com /td sha256 /d "Arcana Launcher" publish\ArcanaLauncher.exe
+            if ($LASTEXITCODE -ne 0) { throw 'signtool sign failed' }
+            & $signtool verify /pa /v publish\ArcanaLauncher.exe
+            if ($LASTEXITCODE -ne 0) { throw 'Signature verification failed' }
           }
-          if (-not $signtool) {
-            Write-Error "signtool.exe not found"
-            exit 1
-          }
-          Write-Host "Using signtool: $signtool"
-
-          & $signtool sign `
-            /f $certPath `
-            /p $env:CODE_SIGN_PASSWORD `
-            /fd sha256 `
-            /tr http://timestamp.digicert.com `
-            /td sha256 `
-            /d "Arcana Launcher" `
-            publish\ArcanaLauncher.exe
-
-          if ($LASTEXITCODE -ne 0) {
-            Remove-Item $certPath -Force
-            Write-Error "signtool sign failed"
-            exit 1
-          }
-
-          & $signtool verify /pa /v publish\ArcanaLauncher.exe
-          if ($LASTEXITCODE -ne 0) {
-            Remove-Item $certPath -Force
-            Write-Error "Signature verification failed"
-            exit 1
-          }
-
-          Remove-Item $certPath -Force
+          finally { Remove-Item $certPath -Force }
           "signed=true" >> $env:GITHUB_OUTPUT
-          Write-Host "Binary signed and verified."
 
       - name: Note unsigned build
         if: ${{ steps.sign.outputs.signed != 'true' }}
         shell: pwsh
-        run: |
-          Write-Host "::warning::Launcher binary was NOT code-signed."
-          Write-Host "Add CODE_SIGN_CERT_BASE64 and CODE_SIGN_PASSWORD repo secrets to enable signing."
-          Write-Host "Players will see a SmartScreen warning until the binary is signed."
-          "signed=false" >> $env:GITHUB_OUTPUT
+        run: Write-Host "::warning::Arcana Launcher is not code-signed; players see a SmartScreen warning on first run."
 
-      # Hash AFTER signing — players verify this hash, and signature changes
-      # the bytes of the exe, so the hash must reflect the final artifact.
-      - name: Build launcher metadata
-        shell: bash
+      # installer/ArcanaLauncher.iss: per-user install to %LocalAppData%\Programs\Arcana Launcher. The script itself
+      # refuses an Inno Setup older than 6.3.
+      - name: Build installer
+        shell: pwsh
         run: |
-          cd publish
-          MD5=$(powershell -Command "(Get-FileHash ArcanaLauncher.exe -Algorithm MD5).Hash" | tr -d '\r' | tr '[:upper:]' '[:lower:]')
-          SHA256=$(powershell -Command "(Get-FileHash ArcanaLauncher.exe -Algorithm SHA256).Hash" | tr -d '\r' | tr '[:upper:]' '[:lower:]')
-          SIZE=$(powershell -Command "(Get-Item ArcanaLauncher.exe).Length" | tr -d '\r')
-
-          cat > launcher-metadata.json <<EOF
-          {
-            "version": "${{ steps.version.outputs.version }}",
-            "commit": "${{ github.sha }}",
-            "build_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-            "file_name": "ArcanaLauncher.exe",
-            "file_size": $SIZE,
-            "md5": "$MD5",
-            "sha256": "$SHA256",
-            "signed": ${{ steps.sign.outputs.signed == 'true' && 'true' || 'false' }}
+          $iscc = @("${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:ProgramFiles\Inno Setup 6\ISCC.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) {
+            choco install innosetup -y --no-progress
+            $iscc = @("${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:ProgramFiles\Inno Setup 6\ISCC.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
           }
-          EOF
-          cat launcher-metadata.json
+          if (-not $iscc) { throw 'Inno Setup (ISCC.exe) not found' }
+          & $iscc /Q "/DAppVersion=${{ steps.version.outputs.version }}" "/DSourceExe=$PWD\publish\ArcanaLauncher.exe" "/O$PWD\publish" installer\ArcanaLauncher.iss
+          if ($LASTEXITCODE -ne 0) { throw 'ISCC failed' }
+          $info = (Get-Item publish\ArcanaLauncherSetup.exe).VersionInfo
+          Write-Host "Built $($info.FileDescription.Trim()) $($info.FileVersion.Trim()) ($([math]::Round((Get-Item publish\ArcanaLauncherSetup.exe).Length / 1MB, 2)) MB)"
+
+      # Hashes AFTER any signing: a signature changes the bytes. Launchers read this file to update themselves
+      # (GameLauncher/LauncherSelfUpdate.cs, LauncherRelease): release_tag names where the files live.
+      - name: Build launcher metadata
+        shell: pwsh
+        run: |
+          $exe = Get-Item publish\ArcanaLauncher.exe
+          $setup = Get-Item publish\ArcanaLauncherSetup.exe
+          [ordered]@{
+            version         = '${{ steps.version.outputs.version }}'
+            release_tag     = '${{ steps.version.outputs.release_tag }}'
+            commit          = '${{ github.sha }}'
+            build_date      = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
+            file_name       = $exe.Name
+            file_size       = $exe.Length
+            sha256          = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+            setup_file_name = $setup.Name
+            setup_size      = $setup.Length
+            setup_sha256    = (Get-FileHash $setup -Algorithm SHA256).Hash.ToLowerInvariant()
+            signed          = '${{ steps.sign.outputs.signed }}' -eq 'true'
+          } | ConvertTo-Json | Set-Content publish\launcher-metadata.json -Encoding utf8NoBOM
+          Get-Content publish\launcher-metadata.json
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ArcanaLauncher-${{ steps.sha.outputs.short }}
+          name: Arcana-Launcher-${{ steps.version.outputs.version }}
           path: |
             publish/ArcanaLauncher.exe
+            publish/ArcanaLauncherSetup.exe
             publish/launcher-metadata.json
           retention-days: 30
+          if-no-files-found: error
 
   release:
     runs-on: ubuntu-latest
     needs: build
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
       - name: Download artifact
         uses: actions/download-artifact@v4
         with:
-          name: ArcanaLauncher-${{ needs.build.outputs.sha_short }}
+          name: Arcana-Launcher-${{ needs.build.outputs.version }}
           path: release-assets
 
-      - name: Delete prior release for this SHA (if any)
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release delete ${{ needs.build.outputs.release_tag }} --yes --cleanup-tag 2>/dev/null || true
-
       - name: Compose release notes
-        id: notes
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          SIGNED="${{ needs.build.outputs.signed }}"
-
-          # First-run instructions for unsigned builds. SmartScreen pops on
-          # the launcher binary because it's downloaded with Mark-of-the-Web
-          # from a browser; the game client the launcher installs later
-          # doesn't carry MOTW and won't trigger SmartScreen at all, so we
-          # only need to talk about the very first launch.
-          if [ "$SIGNED" = "true" ]; then
-            SIGNED_BADGE="✓ Code-signed — no SmartScreen warning expected"
-            FIRST_RUN_BLOCK=""
-          else
-            SIGNED_BADGE="⚠ Not yet code-signed"
-            FIRST_RUN_BLOCK=$(cat <<'BLOCK'
-
-          ### First-time setup (~10 seconds)
-
-          The launcher is brand-new and Windows hasn't built up reputation for it yet,
-          so on **first launch only** you'll see:
-
-          > **Windows protected your PC**
-          > Microsoft Defender SmartScreen prevented an unrecognized app from starting.
-
-          To run the launcher:
-
-          1. Click **More info** (small link, easy to miss)
-          2. Click **Run anyway**
-
-          You only have to do this once per launcher update. After enough players
-          download a given build, Windows starts trusting it automatically and the
-          warning stops appearing for new players.
-
-          The launcher itself is the only file that triggers this warning — the
-          actual game (the native `Arcana.exe` client) is installed *by* the
-          launcher to a folder beside it and launches without any SmartScreen prompt.
-
-          ### Verifying the download (optional, paranoid mode)
-
-          If you'd like to confirm the file you downloaded matches what CI built,
-          right-click `ArcanaLauncher.exe` → Properties → check the size, or
-          run in PowerShell:
-
-          ```powershell
-          Get-FileHash ArcanaLauncher.exe -Algorithm SHA256
-          ```
-
-          and compare against the `sha256` field in `launcher-metadata.json`.
-          BLOCK
-          )
-          fi
-
           {
             echo "## Arcana Launcher ${{ needs.build.outputs.version }}"
             echo ""
-            echo "**Commit:** \`${{ github.sha }}\`"
-            echo "**Built:** $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-            echo "**Signing:** $SIGNED_BADGE"
+            echo "Commit \`${{ github.sha }}\`, built $(date -u +%Y-%m-%d)."
             echo ""
             echo "### Download"
             echo ""
-            echo "Grab **\`ArcanaLauncher.exe\`** from the Assets list below and run it."
-            echo "It's a single self-contained file — no installer, no extra dependencies."
-            echo "$FIRST_RUN_BLOCK"
+            echo "- **ArcanaLauncherSetup.exe**: the installer. It installs Arcana Launcher for your Windows account (no admin rights) with a Start menu shortcut, then Arcana Launcher installs the game and keeps it up to date."
+            echo "- **ArcanaLauncher.exe**: the launcher on its own. Installed launchers update themselves from it."
+            echo "- **launcher-metadata.json**: the version, sizes and SHA-256 of both files."
             echo ""
-            echo "### Assets"
-            echo "- \`ArcanaLauncher.exe\` — single-file self-contained Windows launcher (no .NET install required)"
-            echo "- \`launcher-metadata.json\` — build metadata including MD5/SHA256 of the binary"
+            if [ "${{ needs.build.outputs.signed }}" != "true" ]; then
+              echo "### If Windows says it protected your PC"
+              echo ""
+              echo "The installer is not code-signed yet. Click **More info**, then **Run anyway**."
+              echo ""
+            fi
+            echo "To check a download in PowerShell: \`Get-FileHash ArcanaLauncherSetup.exe\` and compare it with \`setup_sha256\` in launcher-metadata.json."
           } > release-notes.md
-
           cat release-notes.md
 
-      - name: Create SHA-tagged release
+      # The version's own release, with its files. GitHub's "Latest" marker moves to it in one step, so
+      # releases/latest/download/... (the website's Download button, launchers from 1.0.10 on) never points at a
+      # release that is half uploaded.
+      - name: Create the version's release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          LATEST: ${{ github.event_name == 'push' || inputs.mark_latest }}
         run: |
           gh release create "${{ needs.build.outputs.release_tag }}" \
-            --title "Launcher ${{ needs.build.outputs.version }}" \
+            --title "Arcana Launcher ${{ needs.build.outputs.version }}" \
             --notes-file release-notes.md \
-            release-assets/*
+            --target "${{ github.sha }}" \
+            --latest="$LATEST" \
+            release-assets/ArcanaLauncher.exe release-assets/ArcanaLauncherSetup.exe release-assets/launcher-metadata.json
 
-      - name: Update floating 'latest' tag
+      # Launchers up to 1.0.9 read releases/download/latest/... (the tag named "latest"), and the oldest ones
+      # YamanoRealmsLauncher.exe. That release is updated in place, never deleted (deleting it 404'd every link
+      # until it was made again): files first, the metadata last, so it never names bytes that aren't there yet.
+      # Drop the YamanoRealmsLauncher.exe line once its download count stops rising.
+      - name: Update the old "latest" tag for launchers up to 1.0.9
         if: ${{ github.event_name == 'push' || inputs.mark_latest }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
         run: |
-          # Replace the moving 'latest' release with the new build, so the
-          # launcher's hard-coded download URL keeps pointing at the freshest
-          # binary without a code change.
-          gh release delete latest --yes --cleanup-tag 2>/dev/null || true
-
-          # Launchers from before the rename self-update by downloading
-          # latest/YamanoRealmsLauncher.exe and swapping themselves for it.
-          # Publishing this build under the old name too moves every one of
-          # them onto the new launcher without anyone re-downloading by hand.
-          # Only 'latest' carries it; drop this once old installs are gone.
           cp release-assets/ArcanaLauncher.exe release-assets/YamanoRealmsLauncher.exe
-
-          # Reuse the same body as the per-SHA release — players who land on
-          # `releases/latest` get the same first-run guidance.
-          gh release create latest \
-            --title "Latest Arcana Launcher" \
-            --notes-file release-notes.md \
-            release-assets/*
+          if gh release view latest > /dev/null 2>&1; then
+            gh release upload latest release-assets/ArcanaLauncher.exe release-assets/YamanoRealmsLauncher.exe release-assets/ArcanaLauncherSetup.exe --clobber
+            gh release upload latest release-assets/launcher-metadata.json --clobber
+          else
+            gh release create latest --title "Arcana Launcher (for launchers up to 1.0.9)" --notes-file release-notes.md --latest=false \
+              release-assets/ArcanaLauncher.exe release-assets/YamanoRealmsLauncher.exe release-assets/ArcanaLauncherSetup.exe release-assets/launcher-metadata.json
+          fi
+          gh release edit latest --title "Arcana Launcher (for launchers up to 1.0.9)" --latest=false
