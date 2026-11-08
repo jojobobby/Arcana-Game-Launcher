@@ -219,6 +219,48 @@
                 </Setter.Value>
             </Setter>
         </Style>
+        <!-- The Live / Development switch: the SecondaryButton look, the selected one in the DownloadButton blue. -->
+        <Style x:Key="ChannelSegment" TargetType="ToggleButton">
+            <Setter Property="Height" Value="26"/>
+            <Setter Property="MinWidth" Value="104"/>
+            <Setter Property="Padding" Value="14,0"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="#b9d7df"/>
+            <Setter Property="Background" Value="#d9132029"/>
+            <Setter Property="BorderBrush" Value="#4f6b7a"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border x:Name="Root"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="5">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Root" Property="Background" Value="#314b5c"/>
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Root" Property="Background" Value="#2f68b7"/>
+                                <Setter TargetName="Root" Property="BorderBrush" Value="#9fd1ff"/>
+                                <Setter Property="Foreground" Value="#eef8ff"/>
+                                <Setter Property="Cursor" Value="Arrow"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="Root" Property="Opacity" Value="0.55"/>
+                                <Setter Property="Cursor" Value="Arrow"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </Window.Resources>
 
     <Grid Width="696" Height="448" UseLayoutRounding="True">
@@ -250,23 +292,28 @@
 
         <StackPanel VerticalAlignment="Top"
                     HorizontalAlignment="Center"
-                    Margin="0,8,0,0">
+                    Margin="0,6,0,0">
             <Image Source="/Assets/Logo.png"
                    Width="300"
-                   Height="150"
+                   Height="136"
                    Stretch="Uniform"
                    RenderOptions.BitmapScalingMode="HighQuality"/>
-            <TextBlock Name="ChannelText"
-                       Text="Production"
-                       FontSize="13"
-                       FontWeight="SemiBold"
-                       Foreground="#d8f4ff"
-                       TextAlignment="Center"
-                       Margin="0,4,0,0">
-                <TextBlock.Effect>
-                    <DropShadowEffect Color="Black" BlurRadius="5" ShadowDepth="1" Opacity="0.9"/>
-                </TextBlock.Effect>
-            </TextBlock>
+            <!-- Which servers: Live (production) or Development. Each has its own game folder; the pick is saved. -->
+            <StackPanel Orientation="Horizontal"
+                        HorizontalAlignment="Center"
+                        Margin="0,6,0,0">
+                <ToggleButton Name="LiveButton"
+                              Style="{StaticResource ChannelSegment}"
+                              Content="Live"
+                              Checked="Live_Checked"
+                              Unchecked="Segment_Unchecked"
+                              Margin="0,0,6,0"/>
+                <ToggleButton Name="DevelopmentButton"
+                              Style="{StaticResource ChannelSegment}"
+                              Content="Development"
+                              Checked="Development_Checked"
+                              Unchecked="Segment_Unchecked"/>
+            </StackPanel>
         </StackPanel>
 
         <!-- Shown on a copy run from outside its install (Downloads): offers the installer; and after a move, says so. -->
@@ -275,7 +322,7 @@
                 HorizontalAlignment="Center"
                 VerticalAlignment="Top"
                 Width="548"
-                Margin="0,184,0,0"
+                Margin="0,186,0,0"
                 Background="#e60b1822"
                 BorderBrush="#4f6b7a"
                 BorderThickness="1"

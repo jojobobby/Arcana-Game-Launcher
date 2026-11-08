@@ -74,16 +74,20 @@ namespace GameLauncher.Tests
     [NonParallelizable]
     public class SingleInstanceTests
     {
+        // Names of their own, so the tests run fine next to a real Arcana Launcher (and never wake it).
+        private static string Unique() => "TidanGames.ArcanaLauncher.Test." + Guid.NewGuid().ToString("N");
+
         [Test]
         public void ASecondLauncherCannotTakeTheMutexUntilTheFirstLetsGo()
         {
-            using (var first = SingleInstance.TryAcquire(TimeSpan.Zero))
+            var name = Unique();
+            using (var first = SingleInstance.TryAcquire(TimeSpan.Zero, name))
             {
-                Assert.That(first, Is.Not.Null, "close any running Arcana Launcher before running the tests");
+                Assert.That(first, Is.Not.Null);
                 SingleInstance second = null;
                 var other = new Thread(() =>
                 {
-                    second = SingleInstance.TryAcquire(TimeSpan.Zero);
+                    second = SingleInstance.TryAcquire(TimeSpan.Zero, name);
                     second?.Dispose();
                 });
                 other.Start();
@@ -94,7 +98,7 @@ namespace GameLauncher.Tests
             SingleInstance after = null;
             var later = new Thread(() =>
             {
-                after = SingleInstance.TryAcquire(TimeSpan.Zero);
+                after = SingleInstance.TryAcquire(TimeSpan.Zero, name);
                 after?.Dispose();
             });
             later.Start();
@@ -105,13 +109,23 @@ namespace GameLauncher.Tests
         [Test]
         public void ASecondStartWakesTheFirst()
         {
-            using (var first = SingleInstance.TryAcquire(TimeSpan.Zero))
+            var name = Unique();
+            using (var first = SingleInstance.TryAcquire(TimeSpan.Zero, name))
             using (var woken = new ManualResetEventSlim())
             {
-                first.ListenForSecondStart(woken.Set);
-                SingleInstance.ShowFirst();
+                first.ListenForSecondStart(woken.Set, name + ".Show");
+                SingleInstance.ShowFirst(name + ".Show");
                 Assert.That(woken.Wait(TimeSpan.FromSeconds(5)), Is.True);
             }
+        }
+
+        [Test]
+        public void ALocalBuildNeverSharesTheReleasesLockOrFolder()
+        {
+            // The test assembly runs a local build: it must not be able to block, or be blocked by, a player's launcher.
+            Assert.That(LauncherInfo.IsReleaseBuild, Is.False);
+            Assert.That(LauncherInfo.MutexName, Is.Not.EqualTo(LauncherInfo.ReleaseMutexName));
+            Assert.That(LauncherInfo.DataDir, Does.EndWith("Arcana Launcher (local build)"));
         }
     }
 }

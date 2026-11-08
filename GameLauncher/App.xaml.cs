@@ -36,9 +36,11 @@ namespace GameLauncher
                 args.SetObserved();
             };
 
-            var options = LaunchOptions.Parse(e.Args, Environment.GetEnvironmentVariable, LauncherInfo.IsReleaseBuild);
+            var options = LaunchOptions.Parse(e.Args, Environment.GetEnvironmentVariable, LauncherInfo.IsReleaseBuild,
+                LauncherSettings.Load(LauncherSettings.DefaultPath).Channel);
             Log.Info($"{LauncherInfo.Name} {LauncherInfo.Version}{(LauncherInfo.IsReleaseBuild ? "" : " (local build)")} " +
                      $"from {LauncherInfo.ExeDir} on {RuntimeInformation.OSDescription}; channel {options.Channel.Name} " +
+                     $"({options.ChannelSource}) " +
                      $"({options.Channel.ServerUrl}); installed copy: {LauncherInfo.RunsFromInstall()}; " +
                      $"updates from: {options.ReleasesUrl ?? "nowhere (local build)"}");
 

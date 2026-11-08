@@ -31,9 +31,9 @@ namespace GameLauncher
         /// Takes the launcher mutex, waiting up to <paramref name="wait"/> (a launcher that just updated waits for the old
         /// one to let go). Null when another launcher holds it.
         /// </summary>
-        public static SingleInstance TryAcquire(TimeSpan wait)
+        public static SingleInstance TryAcquire(TimeSpan wait, string mutexName = null)
         {
-            var mutex = new Mutex(false, LauncherInfo.MutexName);
+            var mutex = new Mutex(false, mutexName ?? LauncherInfo.MutexName);
             bool owned;
             try
             {
@@ -50,17 +50,17 @@ namespace GameLauncher
         }
 
         /// <summary>Calls <paramref name="show"/> (on a pool thread) whenever a second launcher starts.</summary>
-        public void ListenForSecondStart(Action show)
+        public void ListenForSecondStart(Action show, string eventName = null)
         {
-            _show = new EventWaitHandle(false, EventResetMode.AutoReset, LauncherInfo.ShowEventName);
+            _show = new EventWaitHandle(false, EventResetMode.AutoReset, eventName ?? LauncherInfo.ShowEventName);
             _listening = ThreadPool.RegisterWaitForSingleObject(_show, (state, timedOut) => show(), null, Timeout.Infinite, false);
         }
 
         /// <summary>The second launcher's half: let the first take the foreground, and wake it.</summary>
-        public static void ShowFirst()
+        public static void ShowFirst(string eventName = null)
         {
             AllowSetForegroundWindow(AsfwAny);
-            if (EventWaitHandle.TryOpenExisting(LauncherInfo.ShowEventName, out var show))
+            if (EventWaitHandle.TryOpenExisting(eventName ?? LauncherInfo.ShowEventName, out var show))
                 using (show)
                     show.Set();
         }

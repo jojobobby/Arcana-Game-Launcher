@@ -39,26 +39,41 @@ namespace GameLauncher
         public LauncherChannel WithServer(string serverUrl) =>
             new LauncherChannel(Name, Label + " (test server)", serverUrl.TrimEnd('/'), InstallDirName);
 
-        public static LauncherChannel FromArgs(string[] args)
+        public static LauncherChannel FromArgs(string[] args) => TryFromArgs(args, out var channel) ? channel : Production;
+
+        /// <summary>
+        /// The channel the command line names (--dev, --channel development, --channel production), if it names one.
+        /// An unknown name counts as production, so a typo never lands a player on the development server.
+        /// </summary>
+        public static bool TryFromArgs(string[] args, out LauncherChannel channel)
         {
+            channel = null;
             for (var i = 0; i < args.Length; i++)
             {
                 var arg = args[i];
                 if (string.Equals(arg, "--dev", StringComparison.OrdinalIgnoreCase))
-                    return Development;
+                {
+                    channel = Development;
+                    return true;
+                }
 
                 string value = null;
                 if (string.Equals(arg, "--channel", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
                     value = args[i + 1];
                 else if (arg.StartsWith("--channel=", StringComparison.OrdinalIgnoreCase))
                     value = arg.Substring("--channel=".Length);
-
-                if (string.Equals(value, Development.Name, StringComparison.OrdinalIgnoreCase))
-                    return Development;
+                if (value != null)
+                {
+                    channel = FromName(value);
+                    return true;
+                }
             }
-
-            return Production;
+            return false;
         }
+
+        /// <summary>"development" is Development; anything else (null, a typo, "production") is Production.</summary>
+        public static LauncherChannel FromName(string name) =>
+            string.Equals(name?.Trim(), Development.Name, StringComparison.OrdinalIgnoreCase) ? Development : Production;
 
         /// <summary>The arguments that bring this channel back after the launcher restarts itself.</summary>
         public string[] Arguments() => Name == Development.Name ? new[] { "--channel", Name } : Array.Empty<string>();

@@ -22,9 +22,8 @@ namespace GameLauncher
         public const string Publisher = "Tidan Games LLC";
         public const string ExeName = "ArcanaLauncher.exe";
         public const string AppUserModelId = "TidanGames.ArcanaLauncher";
-        /// <summary>Session-local: one launcher per Windows session. installer/ArcanaLauncher.iss AppMutex is the same name.</summary>
-        public const string MutexName = "TidanGames.ArcanaLauncher";
-        public const string ShowEventName = "TidanGames.ArcanaLauncher.Show";
+        /// <summary>The release's one-launcher mutex; installer/ArcanaLauncher.iss AppMutex is the same name.</summary>
+        public const string ReleaseMutexName = "TidanGames.ArcanaLauncher";
         /// <summary>The Inno Setup AppId. Never change it: Windows finds the existing install (and its uninstaller) by it.</summary>
         public const string InnoAppId = "{D5E69C41-93F1-499D-8514-ABD3329B6CC2}";
         public const string UninstallKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\" + InnoAppId + "_is1";
@@ -44,11 +43,19 @@ namespace GameLauncher
 
         public static string UserAgent => "ArcanaLauncher/" + Version + (IsReleaseBuild ? "" : "-dev");
 
+        /// <summary>
+        /// Session-local: one launcher per Windows session. A local build has its own mutex and data folder (below), so
+        /// a developer's test build never refuses to start next to the player's own launcher, and never reads or changes
+        /// its saved choice, log or downloads.
+        /// </summary>
+        public static string MutexName { get; } = ReleaseMutexName + (IsReleaseBuild ? "" : ".LocalBuild");
+        public static string ShowEventName => MutexName + ".Show";
+
         public static string ExePath => Environment.ProcessPath;
         public static string ExeDir => AppContext.BaseDirectory;
 
         public static string DataDir { get; } = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), Name);
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), Name + (IsReleaseBuild ? "" : " (local build)"));
         public static string LogsDir => Path.Combine(DataDir, "logs");
         public static string DownloadsDir => Path.Combine(DataDir, "downloads");
 

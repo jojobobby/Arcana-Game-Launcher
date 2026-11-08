@@ -22,7 +22,8 @@ Windows 10 or 11, 64-bit.
 | What | Where |
 |---|---|
 | The launcher | `%LocalAppData%\Programs\Arcana Launcher\ArcanaLauncher.exe` |
-| The game | `%LocalAppData%\Programs\Arcana Launcher\Arcana\` (`Arcana-development\` for testers) |
+| The game | `%LocalAppData%\Programs\Arcana Launcher\Arcana\` (Live) and `Arcana-development\` (Development) |
+| Live or Development | `%LocalAppData%\Arcana Launcher\settings.json` (the last one picked) |
 | Launcher log | `%LocalAppData%\Arcana Launcher\logs\launcher.log` (the **Open logs** link) |
 | Downloads | `%LocalAppData%\Arcana Launcher\downloads\` (game zips by SHA-256; the last two are kept) |
 | The game's own settings and data | `%LocalAppData%\Arcana\` and `%AppData%\Arcana\Arcana\` |
@@ -55,14 +56,19 @@ server serves them at `/client/download` (resumable) and `/client/metadata`. The
 source, so a server deploy that did not change the client costs players nothing. `GameLauncher/ClientMetadata.cs` is
 this side of that contract.
 
-### Development channel (testers)
+### Live and Development
+
+The two buttons under the logo pick the servers: **Live** (`app.tidansrealm.com`) or **Development**
+(`devapp.tidansrealm.com`). Each has its own game folder (`Arcana\` and `Arcana-development\`) and its own build
+check, and the launcher refuses a client marked for the other one. The launcher opens on the one picked last
+time (Live the first time). Switching is off while an install, update or repair runs; a game already running keeps
+running.
+
+For one run, without changing the saved choice:
 
 ```powershell
 & "$env:LOCALAPPDATA\Programs\Arcana Launcher\ArcanaLauncher.exe" --channel development
 ```
-
-It talks to `devapp.tidansrealm.com`, installs into `Arcana-development\` beside production, and refuses a client
-that is not marked `development` (and the other way round).
 
 ## Building
 

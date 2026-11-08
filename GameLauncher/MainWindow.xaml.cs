@@ -33,8 +33,10 @@ namespace GameLauncher
         private static readonly SolidColorBrush Amber = Frozen(240, 190, 96);
 
         private readonly LaunchOptions _options;
-        private readonly LauncherChannel _channel;
-        private readonly ClientInstaller _installer;
+        // The server this window talks to and the install that goes with it. Both change together, only in
+        // SwitchChannel, and only while no job runs: Live and Development never share a folder or a download.
+        private LauncherChannel _channel;
+        private ClientInstaller _installer;
         private readonly LauncherSelfUpdate _selfUpdate;
         private readonly DispatcherTimer _pollTimer;
         private readonly DispatcherTimer _backgroundTimer;
@@ -51,6 +53,7 @@ namespace GameLauncher
         private string _servedETag;
         private bool _busy;
         private bool _polling;
+        private bool _pollAgain;
         private bool _launcherUpdateFailed;
         private CancellationTokenSource _work;
         private BannerKind _banner;
@@ -68,12 +71,11 @@ namespace GameLauncher
             InitializeComponent();
             _options = options;
             _channel = options.Channel;
-            // Beside the launcher exe, not the working directory: a shortcut's "Start in" must not move the install.
-            _installer = new ClientInstaller(App.Http, _channel, LauncherInfo.ExeDir, LauncherInfo.DownloadsDir);
+            _installer = InstallerFor(_channel);
             _selfUpdate = options.ReleasesUrl == null ? null
                 : new LauncherSelfUpdate(App.Http, options.ReleasesUrl, LauncherInfo.ExePath);
 
-            ChannelText.Text = _channel.Label;
+            ShowChannel();
             LauncherVersionText.Text = "Launcher " + LauncherInfo.Version + (LauncherInfo.IsReleaseBuild ? "" : " (local build)");
             _pollTimer = new DispatcherTimer { Interval = PollInterval };
             _pollTimer.Tick += async (sender, args) => await PollAsync();
@@ -89,6 +91,79 @@ namespace GameLauncher
         }
 
         private string Host => new Uri(_channel.ServerUrl).Host;
+
+        // Beside the launcher exe, not the working directory: a shortcut's "Start in" must not move the install.
+        private static ClientInstaller InstallerFor(LauncherChannel channel) =>
+            new ClientInstaller(App.Http, channel, LauncherInfo.ExeDir, LauncherInfo.DownloadsDir);
+
+        // ---- Live / Development -------------------------------------------------------------------------------
+
+        // The window sets the two toggles itself; their Checked events mean a switch only when the player made them.
+        private bool _showingChannel;
+
+        private void ShowChannel()
+        {
+            _showingChannel = true;
+            try
+            {
+                var live = _channel.Name == LauncherChannel.Production.Name;
+                LiveButton.IsChecked = live;
+                DevelopmentButton.IsChecked = !live;
+                var test = _options.ServerOverride != null ? " (test server)" : "";
+                LiveButton.ToolTip = "Play on the live servers (" + new Uri(LauncherChannel.Production.ServerUrl).Host + ")" + test;
+                DevelopmentButton.ToolTip = "Play on the development servers (" + new Uri(LauncherChannel.Development.ServerUrl).Host + ")" + test;
+            }
+            finally
+            {
+                _showingChannel = false;
+            }
+        }
+
+        // Checked and Unchecked, not Click: a keyboard, a screen reader (UI Automation's Toggle) and the mouse all
+        // land here. Clicking the selected one only unchecks it, which ShowChannel puts back.
+        private void Live_Checked(object sender, RoutedEventArgs e)
+        {
+            if (!_showingChannel) SwitchChannel(LauncherChannel.Production);
+        }
+
+        private void Development_Checked(object sender, RoutedEventArgs e)
+        {
+            if (!_showingChannel) SwitchChannel(LauncherChannel.Development);
+        }
+
+        private void Segment_Unchecked(object sender, RoutedEventArgs e)
+        {
+            if (!_showingChannel) ShowChannel();
+        }
+
+        /// <summary>
+        /// Moves the window to the other server: its own install folder (Arcana\ or Arcana-development\), its own
+        /// build check, and the choice saved for the next run. Downloads share one folder but are named by checksum,
+        /// so the two builds never mix. Refused while a job runs, so an install of one never finishes into the other.
+        /// A game already running keeps running: it is the other folder.
+        /// </summary>
+        private async void SwitchChannel(LauncherChannel target)
+        {
+            if (_busy || _channel.Name == target.Name)
+            {
+                ShowChannel();
+                return;
+            }
+            var previous = _channel.Name;
+            _channel = _options.Resolve(target);
+            _installer = InstallerFor(_channel);
+            _served = null;
+            _servedETag = null;
+            _pings.Clear();
+            new LauncherSettings { Channel = _channel.Name }.Save(LauncherSettings.DefaultPath);
+            Log.Info($"Switched from {previous} to {_channel.Name} ({_channel.ServerUrl}); saved for the next run.");
+
+            ShowChannel();
+            _installer.CleanLeftovers();
+            SetServerStatus(null, null);
+            ShowIdle();
+            await PollAsync();
+        }
 
         // ---- Start-up -------------------------------------------------------------------------------------------
 
@@ -186,6 +261,8 @@ namespace GameLauncher
             UpdateButton.Content = updateAvailable ? "Update Available" : "Update";
             UpdateButton.IsEnabled = updateAvailable;
             BannerButton.IsEnabled = true;
+            LiveButton.IsEnabled = true;
+            DevelopmentButton.IsEnabled = true;
         }
 
         private void SetStatus(string status, string detail, Brush statusBrush = null)
@@ -203,28 +280,48 @@ namespace GameLauncher
 
         // ---- Server poll ----------------------------------------------------------------------------------------
 
-        /// <summary>Every 15 s while idle: is the server up, how fast, and did its build change.</summary>
+        /// <summary>
+        /// Every 15 s while idle, and right after a switch: is the server up, how fast, and did its build change. An
+        /// answer that comes back after the player switched servers belongs to the other server: it is dropped, and
+        /// the new server is asked instead.
+        /// </summary>
         private async Task PollAsync()
         {
-            if (_busy || _polling) return;
+            if (_busy) return;
+            if (_polling)
+            {
+                _pollAgain = true;
+                return;
+            }
             _polling = true;
             try
             {
-                var poll = await _installer.PollAsync(_servedETag, CancellationToken.None);
-                if (poll.Metadata != null)
+                do
                 {
-                    if (_served == null || _served.Build != poll.Metadata.Build)
-                        Log.Info($"Server {Host} serves build {poll.Metadata.Build} ({poll.Metadata.Version}).");
-                    _served = poll.Metadata;
-                    _servedETag = poll.ETag;
+                    _pollAgain = false;
+                    var installer = _installer;
+                    var poll = await installer.PollAsync(_servedETag, CancellationToken.None);
+                    if (!ReferenceEquals(installer, _installer))
+                    {
+                        _pollAgain = true;
+                        continue;
+                    }
+                    if (poll.Metadata != null)
+                    {
+                        if (_served == null || _served.Build != poll.Metadata.Build)
+                            Log.Info($"Server {Host} serves build {poll.Metadata.Build} ({poll.Metadata.Version}).");
+                        _served = poll.Metadata;
+                        _servedETag = poll.ETag;
+                    }
+                    if (poll.Reached)
+                    {
+                        _pings.Add(poll.Milliseconds);
+                        if (_pings.Count > 3) _pings.RemoveAt(0);
+                    }
+                    SetServerStatus(poll.Reached, poll.Reached ? Ping() : null);
+                    if (!_busy) ShowIdle();
                 }
-                if (poll.Reached)
-                {
-                    _pings.Add(poll.Milliseconds);
-                    if (_pings.Count > 3) _pings.RemoveAt(0);
-                }
-                SetServerStatus(poll.Reached, poll.Reached ? Ping() : null);
-                if (!_busy) ShowIdle();
+                while (_pollAgain && !_busy);
             }
             finally
             {
@@ -253,6 +350,9 @@ namespace GameLauncher
             VerifyButton.IsEnabled = false;
             UninstallButton.IsEnabled = false;
             BannerButton.IsEnabled = false;
+            // No switching servers mid-job: an install of one must never finish into the other.
+            LiveButton.IsEnabled = false;
+            DevelopmentButton.IsEnabled = false;
             UpdateButton.Content = cancellable ? "Cancel" : "Update";
             UpdateButton.IsEnabled = cancellable;
             UpdateProgress.Value = 0;
@@ -588,7 +688,7 @@ namespace GameLauncher
                 try
                 {
                     var start = new ProcessStartInfo(exe) { UseShellExecute = false, WorkingDirectory = LauncherInfo.ExeDir };
-                    foreach (var argument in _options.RestartArguments()) start.ArgumentList.Add(argument);
+                    foreach (var argument in _channel.Arguments()) start.ArgumentList.Add(argument);
                     start.ArgumentList.Add("--updated-from-pid");
                     start.ArgumentList.Add(Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture));
                     process = Process.Start(start);
@@ -723,7 +823,7 @@ namespace GameLauncher
             try
             {
                 var start = new ProcessStartInfo(exe) { UseShellExecute = false, WorkingDirectory = Path.GetDirectoryName(exe) };
-                foreach (var argument in arguments ?? _options.RestartArguments().ToArray()) start.ArgumentList.Add(argument);
+                foreach (var argument in arguments ?? _channel.Arguments()) start.ArgumentList.Add(argument);
                 Process.Start(start)?.Dispose();
                 Close();
             }

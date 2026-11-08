@@ -1,4 +1,6 @@
 using System;
+using System.IO;
+using System.Linq;
 using NUnit.Framework;
 
 namespace GameLauncher.Tests
@@ -87,7 +89,7 @@ namespace GameLauncher.Tests
             Assert.That(options.AdoptFrom, Is.EqualTo("C:\\Users\\me\\Downloads"));
             Assert.That(options.UpdatedFromPid, Is.EqualTo(4242));
             Assert.That(options.Channel, Is.SameAs(LauncherChannel.Development));
-            Assert.That(options.RestartArguments(), Is.EqualTo(new[] { "--channel", "development" }), "one-shot flags are not passed on");
+            Assert.That(options.Channel.Arguments(), Is.EqualTo(new[] { "--channel", "development" }), "one-shot flags are not passed on");
         }
 
         [TestCase("--adopt", "")]
@@ -97,6 +99,88 @@ namespace GameLauncher.Tests
             var options = LaunchOptions.Parse(new[] { flag, value }, name => null, releaseBuild: true);
             Assert.That(options.AdoptFrom, Is.Null);
             Assert.That(options.UpdatedFromPid, Is.EqualTo(0));
+        }
+
+        [TestCase(null, "production", "default")]
+        [TestCase("production", "production", "saved choice")]
+        [TestCase("development", "development", "saved choice")]
+        [TestCase("DEVELOPMENT", "development", "saved choice")]
+        [TestCase("staging", "production", "saved choice")]
+        public void WithoutAFlagItOpensOnTheSavedChoice(string saved, string expected, string source)
+        {
+            var options = LaunchOptions.Parse(new string[0], name => null, releaseBuild: true, saved);
+            Assert.That(options.Channel.Name, Is.EqualTo(expected));
+            Assert.That(options.ChannelSource, Is.EqualTo(source));
+        }
+
+        [TestCase(new[] { "--dev" }, "production", "development")]
+        [TestCase(new[] { "--channel", "production" }, "development", "production")]
+        [TestCase(new[] { "--channel=development" }, "production", "development")]
+        public void AFlagBeatsTheSavedChoiceForThatRun(string[] args, string saved, string expected)
+        {
+            var options = LaunchOptions.Parse(args, name => null, releaseBuild: true, saved);
+            Assert.That(options.Channel.Name, Is.EqualTo(expected));
+            Assert.That(options.ChannelSource, Is.EqualTo("command line"));
+        }
+
+        [Test]
+        public void ATestServerAppliesToWhicheverChannelIsPicked()
+        {
+            var options = LaunchOptions.Parse(new string[0], Env, releaseBuild: false, "development");
+            Assert.That(options.Channel.Name, Is.EqualTo("development"));
+            Assert.That(options.Channel.ServerUrl, Is.EqualTo("http://127.0.0.1:8123"));
+            var live = options.Resolve(LauncherChannel.Production);
+            Assert.That(live.Name, Is.EqualTo("production"));
+            Assert.That(live.InstallDirName, Is.EqualTo("Arcana"));
+            Assert.That(live.ServerUrl, Is.EqualTo("http://127.0.0.1:8123"));
+            Assert.That(LaunchOptions.Parse(new string[0], name => null, releaseBuild: true).Resolve(LauncherChannel.Development),
+                Is.SameAs(LauncherChannel.Development), "no test server: the real channel");
+        }
+    }
+
+    public class LauncherSettingsTests
+    {
+        private string _folder;
+        private string _path;
+
+        [SetUp]
+        public void Setup()
+        {
+            _folder = Path.Combine(Path.GetTempPath(), "arcana-settings-" + Guid.NewGuid());
+            _path = Path.Combine(_folder, LauncherSettings.FileName);
+        }
+
+        [TearDown]
+        public void Cleanup()
+        {
+            if (Directory.Exists(_folder)) Directory.Delete(_folder, true);
+        }
+
+        [Test]
+        public void TheChoiceSurvivesARestart()
+        {
+            new LauncherSettings { Channel = "development" }.Save(_path);
+            Assert.That(LauncherSettings.Load(_path).Channel, Is.EqualTo("development"));
+            new LauncherSettings { Channel = "production" }.Save(_path);
+            Assert.That(LauncherSettings.Load(_path).Channel, Is.EqualTo("production"));
+            Assert.That(Directory.GetFiles(_folder).Select(Path.GetFileName), Is.EqualTo(new[] { LauncherSettings.FileName }), "no temp file left");
+        }
+
+        [TestCase(null)]
+        [TestCase("")]
+        [TestCase("not json")]
+        [TestCase("[1,2,3]")]
+        [TestCase("{ \"channel\": 7 }")]
+        public void AMissingOrDamagedFileMeansTheDefault(string content)
+        {
+            if (content != null)
+            {
+                Directory.CreateDirectory(_folder);
+                File.WriteAllText(_path, content);
+            }
+            var settings = LauncherSettings.Load(_path);
+            Assert.That(settings.Channel, Is.Null);
+            Assert.That(LauncherChannel.FromName(settings.Channel), Is.SameAs(LauncherChannel.Production));
         }
     }
 }
