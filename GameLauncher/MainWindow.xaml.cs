@@ -241,6 +241,15 @@ namespace GameLauncher
                         ShowCodeError(string.IsNullOrWhiteSpace(CodeBox.Password) ? "Enter the access code." : WrongCodeText);
                         continue;
                     }
+                    // The launcher knows the development code: a wrong one never reaches the server, so a typo is
+                    // not one of the few guesses the server allows.
+                    var known = installer.Channel.Name == LauncherChannel.Development.Name;
+                    if (known && !AccessCodes.IsDevelopmentCode(code))
+                    {
+                        CodeBox.Clear();
+                        ShowCodeError(WrongCodeText);
+                        continue;
+                    }
                     CodeBox.IsEnabled = false;
                     CodeUnlockButton.IsEnabled = false;
                     switch (await installer.ProbeAccessAsync(code))
@@ -250,9 +259,10 @@ namespace GameLauncher
                             Log.Info($"The {installer.Channel.Name} server took the access code; remembered for the next run.");
                             return true;
                         case AccessAnswer.Refused:
-                            Log.Warn($"The {installer.Channel.Name} server refused the access code.");
+                            Log.Warn($"The {installer.Channel.Name} server refused the access code" +
+                                     (known ? " this launcher was built with: the server's code is another one." : "."));
                             CodeBox.Clear();
-                            ShowCodeError(WrongCodeText);
+                            ShowCodeError(known ? "The server didn't take the code. Update Arcana Launcher." : WrongCodeText);
                             break;
                         case AccessAnswer.TooManyTries:
                             Log.Warn($"The {installer.Channel.Name} server refuses more access codes from here for a while.");

@@ -25,13 +25,18 @@ namespace GameLauncher
     /// The access codes of the servers that ask for one (the development server), and the handler that sends them. A
     /// code goes only to the /client/ routes of the server it was entered for (Arcana repo: ClientReleaseStore.cs,
     /// header X-Arcana-Access-Code): never to the live server, GitHub or anywhere a redirect points. The server checks
-    /// it; the launcher only remembers it, encrypted for this Windows user (DPAPI), so a copied settings.json opens
+    /// it; the launcher remembers it, encrypted for this Windows user (DPAPI), so a copied settings.json opens
     /// nothing on another PC or account.
+    /// The launcher also knows the development code itself (the user, 2026-11-15: "hard code the code into the
+    /// launcher"), as a SHA-256 so the word is not in this public repo or readable in the exe: a typed code that is
+    /// not it is refused here, without asking the server. The server's Secret must hold the same code.
     /// </summary>
     internal sealed class AccessCodes : DelegatingHandler
     {
         public const string Header = "X-Arcana-Access-Code";
         public const int MaxLength = 128;
+        /// <summary>SHA-256 (lower hex, UTF-8) of the development access code.</summary>
+        public const string DevelopmentCodeHash = "2171952a109fc3a326b4878f23fa16f5b01e3f61699809c4f145fd17e864d8a1";
 
         private static readonly byte[] Entropy = Encoding.UTF8.GetBytes("TidanGames.ArcanaLauncher.AccessCode");
 
@@ -76,6 +81,18 @@ namespace GameLauncher
             foreach (var c in code)
                 if (c < 0x20 || c > 0x7E) return null;
             return code;
+        }
+
+        /// <summary>Whether <paramref name="code"/> is the development access code (exact, case and all).</summary>
+        public static bool IsDevelopmentCode(string code) => Matches(code, DevelopmentCodeHash);
+
+        /// <summary>Whether <paramref name="code"/>, cleaned, hashes to <paramref name="sha256"/>. Constant time.</summary>
+        public static bool Matches(string code, string sha256)
+        {
+            code = Clean(code);
+            if (code == null || string.IsNullOrEmpty(sha256)) return false;
+            var actual = Encoding.ASCII.GetBytes(Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(code))).ToLowerInvariant());
+            return CryptographicOperations.FixedTimeEquals(actual, Encoding.ASCII.GetBytes(sha256.ToLowerInvariant()));
         }
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancel)

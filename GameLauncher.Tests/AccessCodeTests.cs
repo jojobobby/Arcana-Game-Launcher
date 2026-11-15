@@ -150,6 +150,33 @@ namespace GameLauncher.Tests
             Assert.That(AccessCodes.Clean(new string('a', AccessCodes.MaxLength + 1)), Is.Null);
         }
 
+        // ---- the code the launcher knows ----
+
+        [Test]
+        public void ACodeIsMatchedByItsHashExactly()
+        {
+            const string hash = "2ba63c0a7fb3bd97a8a8a1a8b3dc4c1a3d6f2a9c1e8f6ed1e1fd4f7bb0b1ec1f";
+            var real = FakeServer.Sha256(Code);
+            Assert.That(AccessCodes.Matches(Code, real), Is.True);
+            Assert.That(AccessCodes.Matches("  " + Code + " ", real), Is.True, "typed with spaces around it");
+            Assert.That(AccessCodes.Matches(Code, real.ToUpperInvariant()), Is.True);
+            Assert.That(AccessCodes.Matches(Code.ToUpperInvariant(), real), Is.False, "case counts");
+            Assert.That(AccessCodes.Matches(Code + "x", real), Is.False);
+            Assert.That(AccessCodes.Matches(Code, hash), Is.False);
+            Assert.That(AccessCodes.Matches(null, real), Is.False);
+            Assert.That(AccessCodes.Matches("", real), Is.False);
+            Assert.That(AccessCodes.Matches(Code, null), Is.False);
+        }
+
+        [Test]
+        public void TheDevelopmentCodeIsKeptAsAHashNotAsTheWord()
+        {
+            Assert.That(AccessCodes.DevelopmentCodeHash, Does.Match("^[0-9a-f]{64}$"));
+            Assert.That(AccessCodes.IsDevelopmentCode(Code), Is.False);
+            Assert.That(AccessCodes.IsDevelopmentCode(AccessCodes.DevelopmentCodeHash), Is.False, "the hash is not the code");
+            Assert.That(AccessCodes.IsDevelopmentCode(""), Is.False);
+        }
+
         // ---- how it is kept ----
 
         [Test]

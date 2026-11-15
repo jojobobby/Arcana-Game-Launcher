@@ -69,7 +69,11 @@ Development is behind an access code. The development server checks it (Arcana r
 The launcher asks for the code the first time Development is picked, or when the server stops taking the one it
 has, and keeps it in `settings.json` encrypted for the Windows user (DPAPI), so the file opens nothing on another
 PC or account. The code is sent only to that server's `/client/` routes. Cancel goes back to Live. The code itself
-lives in the cluster (`arcana-client-access` Secret), never in this repo or the exe.
+lives in the cluster (`arcana-client-access` Secret).
+
+The launcher also knows the code, as a SHA-256 (`AccessCodes.DevelopmentCodeHash`), so the word itself is not in
+this repo or the exe. A typed code that does not match is refused in the launcher and never sent. The Secret must
+hold the same code: to change it, change the Secret, put the new code's SHA-256 in the launcher and release it.
 
 For one run, without changing the saved choice:
 
