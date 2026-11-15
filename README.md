@@ -64,6 +64,13 @@ check, and the launcher refuses a client marked for the other one. The launcher 
 time (Live the first time). Switching is off while an install, update or repair runs; a game already running keeps
 running.
 
+Development is behind an access code. The development server checks it (Arcana repo,
+`Networking/ClientReleaseStore.cs`, header `X-Arcana-Access-Code`): without the right code it gives out no client.
+The launcher asks for the code the first time Development is picked, or when the server stops taking the one it
+has, and keeps it in `settings.json` encrypted for the Windows user (DPAPI), so the file opens nothing on another
+PC or account. The code is sent only to that server's `/client/` routes. Cancel goes back to Live. The code itself
+lives in the cluster (`arcana-client-access` Secret), never in this repo or the exe.
+
 For one run, without changing the saved choice:
 
 ```powershell

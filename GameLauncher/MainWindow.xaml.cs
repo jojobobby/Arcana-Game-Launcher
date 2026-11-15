@@ -37,6 +37,8 @@ namespace GameLauncher
         // SwitchChannel, and only while no job runs: Live and Development never share a folder or a download.
         private LauncherChannel _channel;
         private ClientInstaller _installer;
+        // What settings.json holds (the picked server, the development access code); saved whole on every change.
+        private readonly LauncherSettings _settings;
         private readonly LauncherSelfUpdate _selfUpdate;
         private readonly DispatcherTimer _pollTimer;
         private readonly DispatcherTimer _backgroundTimer;
@@ -72,6 +74,8 @@ namespace GameLauncher
             _options = options;
             _channel = options.Channel;
             _installer = InstallerFor(_channel);
+            _settings = LauncherSettings.Load(LauncherSettings.DefaultPath);
+            App.Codes.Set(options.Resolve(LauncherChannel.Development).ServerUrl, _settings.DevelopmentCode);
             _selfUpdate = options.ReleasesUrl == null ? null
                 : new LauncherSelfUpdate(App.Http, options.ReleasesUrl, LauncherInfo.ExePath);
 
@@ -144,18 +148,27 @@ namespace GameLauncher
         /// </summary>
         private async void SwitchChannel(LauncherChannel target)
         {
-            if (_busy || _channel.Name == target.Name)
+            if (_busy || _unlocking || _channel.Name == target.Name)
+            {
+                ShowChannel();
+                return;
+            }
+            var next = _options.Resolve(target);
+            // Development opens only with its access code. A job may have started while the code was asked for.
+            if (target.Name == LauncherChannel.Development.Name && (!await UnlockAsync(next) || _busy))
             {
                 ShowChannel();
                 return;
             }
             var previous = _channel.Name;
-            _channel = _options.Resolve(target);
+            _channel = next;
             _installer = InstallerFor(_channel);
             _served = null;
             _servedETag = null;
+            _declinedCode = false;
             _pings.Clear();
-            new LauncherSettings { Channel = _channel.Name }.Save(LauncherSettings.DefaultPath);
+            _settings.Channel = _channel.Name;
+            _settings.Save(LauncherSettings.DefaultPath);
             Log.Info($"Switched from {previous} to {_channel.Name} ({_channel.ServerUrl}); saved for the next run.");
 
             ShowChannel();
@@ -163,6 +176,133 @@ namespace GameLauncher
             SetServerStatus(null, null);
             ShowIdle();
             await PollAsync();
+        }
+
+        // ---- The development access code ------------------------------------------------------------------------
+
+        private const string WrongCodeText = "That code is not right.";
+        private const string TooManyTriesText = "Too many wrong codes. Try again in 10 minutes.";
+
+        // True from the first question to the server until the code panel closes: no second switch meanwhile.
+        private bool _unlocking;
+        // The player closed the code panel on this server: don't put it back up on every poll.
+        private bool _declinedCode;
+        // Set while the code panel waits for a click: true for Unlock, false for Cancel.
+        private TaskCompletionSource<bool> _codeEntry;
+
+        /// <summary>
+        /// Whether <paramref name="channel"/>'s server will give this launcher its client: it asks for no code, the
+        /// remembered one is still right, or the player enters the right one now. A server that does not answer counts
+        /// as yes; the window then shows it offline and asks for the code when it is back (PollAsync).
+        /// </summary>
+        private async Task<bool> UnlockAsync(LauncherChannel channel)
+        {
+            _unlocking = true;
+            LiveButton.IsEnabled = false;
+            DevelopmentButton.IsEnabled = false;
+            try
+            {
+                var installer = InstallerFor(channel);
+                var answer = await installer.ProbeAccessAsync(null);
+                if (answer == AccessAnswer.Allowed || answer == AccessAnswer.Unreachable) return true;
+                return await AskForCodeAsync(installer, answer == AccessAnswer.TooManyTries ? TooManyTriesText : null);
+            }
+            finally
+            {
+                _unlocking = false;
+                LiveButton.IsEnabled = !_busy;
+                DevelopmentButton.IsEnabled = !_busy;
+            }
+        }
+
+        /// <summary>
+        /// Shows the code panel over the window until the server takes a code (remembered from then on) or the player
+        /// cancels. Whatever code was remembered is forgotten first: the server just refused it.
+        /// </summary>
+        private async Task<bool> AskForCodeAsync(ClientInstaller installer, string error = null)
+        {
+            RememberCode(installer.Channel, null);
+            CodeBox.Clear();
+            ShowCodeError(error);
+            CodeOverlay.Visibility = Visibility.Visible;
+            try
+            {
+                while (true)
+                {
+                    CodeBox.IsEnabled = true;
+                    CodeUnlockButton.IsEnabled = true;
+                    CodeBox.Focus();
+                    _codeEntry = new TaskCompletionSource<bool>();
+                    if (!await _codeEntry.Task) return false;
+
+                    var code = AccessCodes.Clean(CodeBox.Password);
+                    if (code == null)
+                    {
+                        ShowCodeError(string.IsNullOrWhiteSpace(CodeBox.Password) ? "Enter the access code." : WrongCodeText);
+                        continue;
+                    }
+                    CodeBox.IsEnabled = false;
+                    CodeUnlockButton.IsEnabled = false;
+                    switch (await installer.ProbeAccessAsync(code))
+                    {
+                        case AccessAnswer.Allowed:
+                            RememberCode(installer.Channel, code);
+                            Log.Info($"The {installer.Channel.Name} server took the access code; remembered for the next run.");
+                            return true;
+                        case AccessAnswer.Refused:
+                            Log.Warn($"The {installer.Channel.Name} server refused the access code.");
+                            CodeBox.Clear();
+                            ShowCodeError(WrongCodeText);
+                            break;
+                        case AccessAnswer.TooManyTries:
+                            Log.Warn($"The {installer.Channel.Name} server refuses more access codes from here for a while.");
+                            ShowCodeError(TooManyTriesText);
+                            break;
+                        default:
+                            ShowCodeError("Can't reach the server. Try again.");
+                            break;
+                    }
+                }
+            }
+            finally
+            {
+                _codeEntry = null;
+                CodeOverlay.Visibility = Visibility.Collapsed;
+                CodeBox.Clear();
+            }
+        }
+
+        private void ShowCodeError(string error)
+        {
+            CodeError.Text = error ?? "";
+            CodeError.Visibility = string.IsNullOrEmpty(error) ? Visibility.Collapsed : Visibility.Visible;
+        }
+
+        // Sent with every /client/ request to that server from now on, and kept (encrypted) for the next run.
+        private void RememberCode(LauncherChannel channel, string code)
+        {
+            App.Codes.Set(channel.ServerUrl, code);
+            if (channel.Name != LauncherChannel.Development.Name || _settings.DevelopmentCode == code) return;
+            _settings.DevelopmentCode = code;
+            _settings.Save(LauncherSettings.DefaultPath);
+        }
+
+        private void CodeUnlock_Click(object sender, RoutedEventArgs e) => _codeEntry?.TrySetResult(true);
+
+        private void CodeCancel_Click(object sender, RoutedEventArgs e) => _codeEntry?.TrySetResult(false);
+
+        private void CodeOverlay_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+        {
+            if (e.Key == System.Windows.Input.Key.Escape)
+            {
+                _codeEntry?.TrySetResult(false);
+                e.Handled = true;
+            }
+            else if (e.Key == System.Windows.Input.Key.Enter && CodeBox.IsKeyboardFocused)
+            {
+                _codeEntry?.TrySetResult(true);
+                e.Handled = true;
+            }
         }
 
         // ---- Start-up -------------------------------------------------------------------------------------------
@@ -304,6 +444,29 @@ namespace GameLauncher
                     if (!ReferenceEquals(installer, _installer))
                     {
                         _pollAgain = true;
+                        continue;
+                    }
+                    // The server wants a code this launcher does not have (a saved Development pick on a fresh PC, a
+                    // changed code): ask for it; a player who cancels goes back to Live.
+                    if (poll.CodeNeeded && !_busy && !_unlocking && !_declinedCode)
+                    {
+                        bool unlocked;
+                        _unlocking = true;
+                        try
+                        {
+                            unlocked = await AskForCodeAsync(installer);
+                        }
+                        finally
+                        {
+                            _unlocking = false;
+                        }
+                        _pollAgain = true;
+                        if (!ReferenceEquals(installer, _installer)) continue;
+                        if (!unlocked)
+                        {
+                            _declinedCode = true;
+                            if (_channel.Name != LauncherChannel.Production.Name) SwitchChannel(LauncherChannel.Production);
+                        }
                         continue;
                     }
                     if (poll.Metadata != null)
@@ -970,6 +1133,17 @@ namespace GameLauncher
                     UpdateButton.IsEnabled = false;
                     ShowBanner(BannerKind.Adopted, "Arcana Launcher is installed",
                         "It runs from its own folder now. You can delete the old copy.", "Show Old Copy");
+                    break;
+                case "code":
+                case "code-wrong":
+                    SetStatus("Ready to play", "app.tidansrealm.com", Green);
+                    UpdateProgress.Value = 100;
+                    SetPlay("Play", "SmallPlayButton");
+                    UpdateButton.IsEnabled = false;
+                    ShowCodeError(state == "code-wrong" ? WrongCodeText : null);
+                    CodeOverlay.Visibility = Visibility.Visible;
+                    if (state == "code-wrong") CodeBox.Password = "example";
+                    CodeBox.Focus();
                     break;
                 case "verified":
                     SetStatus("All files are OK", "Every game file matches the release.");

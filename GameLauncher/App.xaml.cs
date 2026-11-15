@@ -21,6 +21,8 @@ namespace GameLauncher
         /// One HttpClient for the whole launcher. No overall timeout: each request carries its own (RetryPolicy), and a
         /// download has a stall timer instead, so a slow connection is never cut off at a fixed time.
         /// </summary>
+        /// <summary>The access codes sent with <see cref="Http"/>'s requests (the development server's).</summary>
+        internal static AccessCodes Codes { get; private set; }
         internal static HttpClient Http { get; } = CreateHttp();
 
         protected override void OnStartup(StartupEventArgs e)
@@ -132,7 +134,8 @@ namespace GameLauncher
                 // Byte ranges and hashes are of the bytes as stored: never ask for a compressed transfer.
                 AutomaticDecompression = System.Net.DecompressionMethods.None,
             };
-            var http = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
+            Codes = new AccessCodes(handler);
+            var http = new HttpClient(Codes) { Timeout = Timeout.InfiniteTimeSpan };
             http.DefaultRequestHeaders.UserAgent.ParseAdd(LauncherInfo.UserAgent);
             return http;
         }

@@ -478,5 +478,68 @@
                     Content="Uninstall"
                     Click="Uninstall_Click"/>
         </StackPanel>
+
+        <!-- Asked before the development servers open. The server checks the code (AccessCodes.cs); this only asks.
+             Last in the grid, so it covers the window and nothing under it takes a click or the Tab key. -->
+        <Grid Name="CodeOverlay"
+              Visibility="Collapsed"
+              Background="#cc071018"
+              KeyboardNavigation.TabNavigation="Cycle"
+              KeyboardNavigation.DirectionalNavigation="Cycle"
+              PreviewKeyDown="CodeOverlay_PreviewKeyDown">
+            <Border HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    Width="340"
+                    Background="#f20b1822"
+                    BorderBrush="#4f6b7a"
+                    BorderThickness="1"
+                    CornerRadius="6"
+                    Padding="18,14">
+                <StackPanel>
+                    <TextBlock Text="Development access"
+                               FontSize="13"
+                               FontWeight="SemiBold"
+                               Foreground="#fff8e8"/>
+                    <TextBlock Text="Enter the access code to play on the development servers."
+                               FontSize="12"
+                               Foreground="#b9d7df"
+                               TextWrapping="Wrap"
+                               Margin="0,2,0,0"/>
+                    <PasswordBox Name="CodeBox"
+                                 Height="34"
+                                 MaxLength="128"
+                                 Padding="8,0"
+                                 VerticalContentAlignment="Center"
+                                 FontSize="14"
+                                 Foreground="#e7faff"
+                                 CaretBrush="#e7faff"
+                                 SelectionBrush="#2f68b7"
+                                 Background="#132029"
+                                 BorderBrush="#5d7c8d"
+                                 BorderThickness="1"
+                                 Margin="0,12,0,0"
+                                 AutomationProperties.Name="Access code"/>
+                    <TextBlock Name="CodeError"
+                               Visibility="Collapsed"
+                               FontSize="12"
+                               Foreground="#e65454"
+                               TextWrapping="Wrap"
+                               Margin="0,6,0,0"/>
+                    <StackPanel Orientation="Horizontal"
+                                HorizontalAlignment="Right"
+                                Margin="0,12,0,0">
+                        <Button Name="CodeCancelButton"
+                                Style="{StaticResource SecondaryButton}"
+                                Content="Cancel"
+                                Click="CodeCancel_Click"
+                                Margin="0,0,8,0"/>
+                        <Button Name="CodeUnlockButton"
+                                Style="{StaticResource DownloadButton}"
+                                Content="Unlock"
+                                Click="CodeUnlock_Click"/>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+        </Grid>
     </Grid>
 </Window>

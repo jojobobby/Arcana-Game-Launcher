@@ -69,6 +69,8 @@ namespace GameLauncher
     internal sealed class MetadataPoll
     {
         public bool Reached { get; set; }
+        /// <summary>The server is up but wants an access code it was not given (401).</summary>
+        public bool CodeNeeded { get; set; }
         public ClientMetadata Metadata { get; set; }
         public string ETag { get; set; }
         public long Milliseconds { get; set; }
@@ -242,6 +244,9 @@ namespace GameLauncher
                         if (status == 404)
                             throw new LauncherException("Server unavailable",
                                 "The game server is running but has no client to offer yet. Try again in a few minutes.");
+                        if (status == 401)
+                            throw new LauncherException("Access code needed",
+                                $"The {_channel.Label} server asks for an access code before it gives out its client.");
                         if (status == 408 || status == 429 || status >= 500)
                             throw new RetryableException(status == 503 || status == 429 ? "the server is busy" : "the server answered HTTP " + status,
                                 RetryPolicy.RetryAfterOf(response), status == 503 || status == 429);
@@ -294,7 +299,8 @@ namespace GameLauncher
                         poll.Milliseconds = clock.ElapsedMilliseconds;
                         var status = (int)response.StatusCode;
                         // Busy (503) still means the server is up.
-                        poll.Reached = status == 304 || status == 503 || response.IsSuccessStatusCode;
+                        poll.CodeNeeded = status == 401;
+                        poll.Reached = status == 304 || status == 503 || status == 401 || response.IsSuccessStatusCode;
                         if (response.IsSuccessStatusCode)
                         {
                             var body = await response.Content.ReadAsStringAsync(timeout.Token).ConfigureAwait(false);
@@ -310,6 +316,36 @@ namespace GameLauncher
                 poll.Reached = ex is LauncherException;
             }
             return poll;
+        }
+
+        /// <summary>
+        /// Asks the server for its client's metadata with <paramref name="code"/> (null: with whatever code is already
+        /// remembered for it) and says how the server took it. Never throws for the network. Only the server knows the
+        /// code, so this is the one way to tell a right code from a wrong one.
+        /// </summary>
+        public async Task<AccessAnswer> ProbeAccessAsync(string code, CancellationToken cancel = default)
+        {
+            try
+            {
+                using (var timeout = RetryPolicy.WithTimeout(cancel, TimeSpan.FromSeconds(10)))
+                using (var request = new HttpRequestMessage(HttpMethod.Get, _channel.MetadataUrl))
+                {
+                    if (code != null) request.Headers.TryAddWithoutValidation(AccessCodes.Header, code);
+                    using (var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token).ConfigureAwait(false))
+                    {
+                        var status = (int)response.StatusCode;
+                        if (status == 401) return AccessAnswer.Refused;
+                        if (status == 429) return AccessAnswer.TooManyTries;
+                        // 404 is a server with no client to give: nothing there for a code to open.
+                        return response.IsSuccessStatusCode || status == 404 ? AccessAnswer.Allowed : AccessAnswer.Unreachable;
+                    }
+                }
+            }
+            catch (Exception ex) when (ex is HttpRequestException ||
+                                       ex is OperationCanceledException && !cancel.IsCancellationRequested)
+            {
+                return AccessAnswer.Unreachable;
+            }
         }
 
         /// <summary>
